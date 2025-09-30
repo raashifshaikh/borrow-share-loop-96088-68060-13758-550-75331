@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { Link } from "react-router-dom";
 
 export const Navigation = () => {
   return (
@@ -6,16 +7,17 @@ export const Navigation = () => {
       <div className="flex items-center space-x-8">
         <h1 className="text-2xl font-bold text-foreground">BorrowPal</h1>
         <div className="hidden md:flex items-center space-x-8">
-          <a href="#" className="nav-link">Explore</a>
-          <a href="#" className="nav-link">Create</a>
-          <a href="#" className="nav-link">Post</a>
-          <a href="#" className="nav-link">App</a>
-          <a href="#" className="nav-link">Sign in</a>
+          <a href="#browse" className="nav-link">Explore</a>
+          <a href="#features" className="nav-link">Features</a>
+          <a href="#how-it-works" className="nav-link">How it Works</a>
+          <Link to="/auth" className="nav-link">Sign in</Link>
         </div>
       </div>
-      <Button variant="default" className="bg-primary text-primary-foreground hover:bg-primary/90 px-6 py-2 rounded-full">
-        Dashboard
-      </Button>
+      <Link to="/auth">
+        <Button variant="default" className="px-6 py-2 rounded-full">
+          Get Started
+        </Button>
+      </Link>
     </nav>
   );
 };
