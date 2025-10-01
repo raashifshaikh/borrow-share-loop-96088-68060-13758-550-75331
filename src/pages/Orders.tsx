@@ -104,16 +104,18 @@ const Orders = () => {
         </div>
         
         <div className="flex gap-2 mt-4">
-          <Link to={`/listing/${order.listing_id}`} className="flex-1">
+          <Link to={`/orders/${order.id}`} className="flex-1">
             <Button variant="outline" size="sm" className="w-full">
-              View Listing
+              View Details
             </Button>
           </Link>
-          <Link to={`/messages?order=${order.id}`} className="flex-1">
-            <Button variant="outline" size="sm" className="w-full">
-              Message
-            </Button>
-          </Link>
+          {order.status === 'accepted' && (
+            <Link to={`/messages?order=${order.id}`} className="flex-1">
+              <Button variant="outline" size="sm" className="w-full">
+                Message
+              </Button>
+            </Link>
+          )}
         </div>
       </CardContent>
     </Card>
