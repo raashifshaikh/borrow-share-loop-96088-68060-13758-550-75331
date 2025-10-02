@@ -106,13 +106,13 @@ const EditListing = () => {
         title: formData.get('title') as string,
         description: formData.get('description') as string,
         price: parseFloat(formData.get('price') as string),
-        price_type: formData.get('price_type'),
-        category_id: formData.get('category_id'),
-        condition: formData.get('condition'),
-        type: formData.get('type'),
+        price_type: formData.get('price_type') as any,
+        category_id: formData.get('category_id') as string,
+        condition: formData.get('condition') as any,
+        type: formData.get('type') as any,
         images: uploadedImages,
-        delivery_options: [formData.get('delivery_option')],
-        status: formData.get('status')
+        delivery_options: [formData.get('delivery_option')] as any,
+        status: formData.get('status') as any
       };
 
       const { error } = await supabase

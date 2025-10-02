@@ -14,6 +14,72 @@ export type Database = {
   }
   public: {
     Tables: {
+      achievements: {
+        Row: {
+          achievement_type: string
+          achievement_value: number
+          created_at: string | null
+          id: string
+          metadata: Json | null
+          user_id: string
+        }
+        Insert: {
+          achievement_type: string
+          achievement_value?: number
+          created_at?: string | null
+          id?: string
+          metadata?: Json | null
+          user_id: string
+        }
+        Update: {
+          achievement_type?: string
+          achievement_value?: number
+          created_at?: string | null
+          id?: string
+          metadata?: Json | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      badges: {
+        Row: {
+          category: string
+          created_at: string | null
+          description: string
+          icon: string
+          id: string
+          name: string
+          rarity: string
+          requirement_type: string
+          requirement_value: number
+          xp_reward: number
+        }
+        Insert: {
+          category: string
+          created_at?: string | null
+          description: string
+          icon: string
+          id?: string
+          name: string
+          rarity?: string
+          requirement_type: string
+          requirement_value: number
+          xp_reward?: number
+        }
+        Update: {
+          category?: string
+          created_at?: string | null
+          description?: string
+          icon?: string
+          id?: string
+          name?: string
+          rarity?: string
+          requirement_type?: string
+          requirement_value?: number
+          xp_reward?: number
+        }
+        Relationships: []
+      }
       categories: {
         Row: {
           created_at: string | null
@@ -321,12 +387,19 @@ export type Database = {
           avatar_url: string | null
           bio: string | null
           created_at: string | null
+          custom_title: string | null
           email: string | null
           id: string
           is_verified: boolean | null
+          last_activity_date: string | null
           name: string | null
           pending_balance: number | null
           phone: string | null
+          profile_color: string | null
+          profile_frame: string | null
+          referral_code: string | null
+          streak_days: number
+          trust_score: number
           updated_at: string | null
           wallet_balance: number | null
         }
@@ -334,12 +407,19 @@ export type Database = {
           avatar_url?: string | null
           bio?: string | null
           created_at?: string | null
+          custom_title?: string | null
           email?: string | null
           id: string
           is_verified?: boolean | null
+          last_activity_date?: string | null
           name?: string | null
           pending_balance?: number | null
           phone?: string | null
+          profile_color?: string | null
+          profile_frame?: string | null
+          referral_code?: string | null
+          streak_days?: number
+          trust_score?: number
           updated_at?: string | null
           wallet_balance?: number | null
         }
@@ -347,14 +427,54 @@ export type Database = {
           avatar_url?: string | null
           bio?: string | null
           created_at?: string | null
+          custom_title?: string | null
           email?: string | null
           id?: string
           is_verified?: boolean | null
+          last_activity_date?: string | null
           name?: string | null
           pending_balance?: number | null
           phone?: string | null
+          profile_color?: string | null
+          profile_frame?: string | null
+          referral_code?: string | null
+          streak_days?: number
+          trust_score?: number
           updated_at?: string | null
           wallet_balance?: number | null
+        }
+        Relationships: []
+      }
+      referrals: {
+        Row: {
+          completed_at: string | null
+          created_at: string | null
+          id: string
+          referral_code: string
+          referred_id: string
+          referrer_id: string
+          status: string
+          xp_awarded: number
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string | null
+          id?: string
+          referral_code: string
+          referred_id: string
+          referrer_id: string
+          status?: string
+          xp_awarded?: number
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string | null
+          id?: string
+          referral_code?: string
+          referred_id?: string
+          referrer_id?: string
+          status?: string
+          xp_awarded?: number
         }
         Relationships: []
       }
@@ -448,6 +568,35 @@ export type Database = {
         }
         Relationships: []
       }
+      user_badges: {
+        Row: {
+          badge_id: string
+          earned_at: string | null
+          id: string
+          user_id: string
+        }
+        Insert: {
+          badge_id: string
+          earned_at?: string | null
+          id?: string
+          user_id: string
+        }
+        Update: {
+          badge_id?: string
+          earned_at?: string | null
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_badges_badge_id_fkey"
+            columns: ["badge_id"]
+            isOneToOne: false
+            referencedRelation: "badges"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_favorites: {
         Row: {
           created_at: string | null
@@ -476,6 +625,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      user_levels: {
+        Row: {
+          created_at: string | null
+          id: string
+          level: number
+          title: string
+          updated_at: string | null
+          user_id: string
+          xp: number
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          level?: number
+          title?: string
+          updated_at?: string | null
+          user_id: string
+          xp?: number
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          level?: number
+          title?: string
+          updated_at?: string | null
+          user_id?: string
+          xp?: number
+        }
+        Relationships: []
       }
       user_payment_methods: {
         Row: {
@@ -533,6 +712,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      award_xp: {
+        Args: { p_user_id: string; p_xp: number }
+        Returns: undefined
+      }
       get_current_user_id: {
         Args: Record<PropertyKey, never>
         Returns: string

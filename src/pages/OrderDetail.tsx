@@ -192,7 +192,7 @@ const OrderDetail = () => {
                   <p className="font-medium text-lg">{order.listings?.title}</p>
                 </Link>
                 <p className="text-sm text-muted-foreground">
-                  {order.listings?.categories?.name}
+                  Category: {(order.listings as any)?.category_id || 'N/A'}
                 </p>
               </div>
 
@@ -242,7 +242,7 @@ const OrderDetail = () => {
                 <p className="text-sm font-medium mb-2">Buyer</p>
                 <div className="flex items-center gap-2">
                   <Package className="h-4 w-4 text-muted-foreground" />
-                  <span>{order.buyer_profile?.name}</span>
+                  <span>{(order as any).buyer_profile?.name || 'N/A'}</span>
                 </div>
               </div>
 
@@ -252,7 +252,7 @@ const OrderDetail = () => {
                 <p className="text-sm font-medium mb-2">Seller</p>
                 <div className="flex items-center gap-2">
                   <Package className="h-4 w-4 text-muted-foreground" />
-                  <span>{order.seller_profile?.name}</span>
+                  <span>{(order as any).seller_profile?.name || 'N/A'}</span>
                 </div>
               </div>
 
@@ -285,12 +285,12 @@ const OrderDetail = () => {
                     className="flex items-start justify-between p-3 bg-muted rounded-lg"
                   >
                     <div className="flex-1">
-                      <p className="font-medium">{neg.from_profile?.name}</p>
+                      <p className="font-medium">{(neg as any).from_profile?.name || 'User'}</p>
                       <p className="text-sm text-muted-foreground">
                         {neg.action === 'offer' && `Offered $${neg.amount}`}
-                        {neg.action === 'counter_offer' && `Counter offered $${neg.amount}`}
+                        {neg.action === 'counter' && `Counter offered $${neg.amount}`}
                         {neg.action === 'accept' && 'Accepted offer'}
-                        {neg.action === 'decline' && 'Declined offer'}
+                        {neg.action === 'reject' && 'Rejected offer'}
                       </p>
                       {neg.message && (
                         <p className="text-sm mt-1">{neg.message}</p>

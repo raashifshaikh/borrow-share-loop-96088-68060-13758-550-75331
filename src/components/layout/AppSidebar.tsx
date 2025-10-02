@@ -9,7 +9,8 @@ import {
   Search,
   ShoppingBag,
   Heart,
-  Bell
+  Bell,
+  Trophy
 } from "lucide-react";
 import {
   Sidebar,
@@ -29,6 +30,7 @@ const mainItems = [
   { title: "My Listings", url: "/my-listings", icon: Package },
   { title: "Orders", url: "/orders", icon: ShoppingBag },
   { title: "Messages", url: "/messages", icon: MessageSquare },
+  { title: "Achievements", url: "/gamification", icon: Trophy },
   { title: "Favorites", url: "/favorites", icon: Heart },
   { title: "Notifications", url: "/notifications", icon: Bell },
 ];

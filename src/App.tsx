@@ -16,6 +16,7 @@ import Profile from "./pages/Profile";
 import ListingDetail from "./pages/ListingDetail";
 import EditListing from "./pages/EditListing";
 import OrderDetail from "./pages/OrderDetail";
+import Gamification from "./pages/Gamification";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -41,6 +42,7 @@ const App = () => (
             <Route path="/messages" element={<Messages />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/profile/:id" element={<Profile />} />
+            <Route path="/gamification" element={<Gamification />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

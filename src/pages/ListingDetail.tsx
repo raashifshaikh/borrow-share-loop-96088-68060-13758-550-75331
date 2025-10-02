@@ -227,10 +227,10 @@ const ListingDetail = () => {
               <p className="text-muted-foreground whitespace-pre-wrap">{listing.description}</p>
             </div>
 
-            {listing.location && (
+            {listing.location && typeof listing.location === 'object' && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <MapPin className="h-4 w-4" />
-                <span>{listing.location.city}, {listing.location.state}</span>
+                <span>{(listing.location as any).city}, {(listing.location as any).state}</span>
               </div>
             )}
 
@@ -242,11 +242,11 @@ const ListingDetail = () => {
               <CardContent>
                 <div className="flex items-center gap-4">
                   <Avatar className="h-12 w-12">
-                    <AvatarImage src={listing.profiles?.avatar_url} />
-                    <AvatarFallback>{listing.profiles?.name?.[0] || 'U'}</AvatarFallback>
+                    <AvatarImage src={(listing as any).profiles?.avatar_url} />
+                    <AvatarFallback>{(listing as any).profiles?.name?.[0] || 'U'}</AvatarFallback>
                   </Avatar>
                   <div className="flex-1">
-                    <p className="font-medium">{listing.profiles?.name}</p>
+                    <p className="font-medium">{(listing as any).profiles?.name}</p>
                     {avgRating > 0 && (
                       <div className="flex items-center gap-1 text-sm">
                         <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
