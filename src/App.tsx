@@ -17,6 +17,9 @@ import ListingDetail from "./pages/ListingDetail";
 import EditListing from "./pages/EditListing";
 import OrderDetail from "./pages/OrderDetail";
 import Gamification from "./pages/Gamification";
+import Settings from "./pages/Settings";
+import Favorites from "./pages/Favorites";
+import Notifications from "./pages/Notifications";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -43,6 +46,9 @@ const App = () => (
             <Route path="/profile" element={<Profile />} />
             <Route path="/profile/:id" element={<Profile />} />
             <Route path="/gamification" element={<Gamification />} />
+            <Route path="/settings" element={<Settings />} />
+            <Route path="/favorites" element={<Favorites />} />
+            <Route path="/notifications" element={<Notifications />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

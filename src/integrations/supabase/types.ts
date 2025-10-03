@@ -251,30 +251,42 @@ export type Database = {
       }
       notifications: {
         Row: {
+          action_label: string | null
+          action_url: string | null
           body: string
           created_at: string | null
           data: Json | null
+          expires_at: string | null
           id: string
+          priority: string | null
           read: boolean | null
           title: string
           type: Database["public"]["Enums"]["notification_type"]
           user_id: string
         }
         Insert: {
+          action_label?: string | null
+          action_url?: string | null
           body: string
           created_at?: string | null
           data?: Json | null
+          expires_at?: string | null
           id?: string
+          priority?: string | null
           read?: boolean | null
           title: string
           type: Database["public"]["Enums"]["notification_type"]
           user_id: string
         }
         Update: {
+          action_label?: string | null
+          action_url?: string | null
           body?: string
           created_at?: string | null
           data?: Json | null
+          expires_at?: string | null
           id?: string
+          priority?: string | null
           read?: boolean | null
           title?: string
           type?: Database["public"]["Enums"]["notification_type"]
@@ -326,14 +338,21 @@ export type Database = {
           created_at: string | null
           currency: string | null
           delivery_address: Json | null
+          delivery_scanned_at: string | null
+          delivery_scanned_by: string | null
           final_amount: number
           id: string
           listing_id: string
           negotiated_price: number | null
           notes: string | null
           original_price: number
+          qr_code_data: Json | null
           quantity: number | null
+          return_scanned_at: string | null
+          return_scanned_by: string | null
           seller_id: string
+          service_end_scan: string | null
+          service_start_scan: string | null
           status: Database["public"]["Enums"]["order_status"] | null
           stripe_payment_intent_id: string | null
           updated_at: string | null
@@ -343,14 +362,21 @@ export type Database = {
           created_at?: string | null
           currency?: string | null
           delivery_address?: Json | null
+          delivery_scanned_at?: string | null
+          delivery_scanned_by?: string | null
           final_amount: number
           id?: string
           listing_id: string
           negotiated_price?: number | null
           notes?: string | null
           original_price: number
+          qr_code_data?: Json | null
           quantity?: number | null
+          return_scanned_at?: string | null
+          return_scanned_by?: string | null
           seller_id: string
+          service_end_scan?: string | null
+          service_start_scan?: string | null
           status?: Database["public"]["Enums"]["order_status"] | null
           stripe_payment_intent_id?: string | null
           updated_at?: string | null
@@ -360,14 +386,21 @@ export type Database = {
           created_at?: string | null
           currency?: string | null
           delivery_address?: Json | null
+          delivery_scanned_at?: string | null
+          delivery_scanned_by?: string | null
           final_amount?: number
           id?: string
           listing_id?: string
           negotiated_price?: number | null
           notes?: string | null
           original_price?: number
+          qr_code_data?: Json | null
           quantity?: number | null
+          return_scanned_at?: string | null
+          return_scanned_by?: string | null
           seller_id?: string
+          service_end_scan?: string | null
+          service_start_scan?: string | null
           status?: Database["public"]["Enums"]["order_status"] | null
           stripe_payment_intent_id?: string | null
           updated_at?: string | null
@@ -716,6 +749,23 @@ export type Database = {
         Args: { p_user_id: string; p_xp: number }
         Returns: undefined
       }
+      create_notification: {
+        Args: {
+          p_action_label?: string
+          p_action_url?: string
+          p_body: string
+          p_data?: Json
+          p_priority?: string
+          p_title: string
+          p_type: Database["public"]["Enums"]["notification_type"]
+          p_user_id: string
+        }
+        Returns: string
+      }
+      generate_order_qr_code: {
+        Args: { p_order_id: string }
+        Returns: Json
+      }
       get_current_user_id: {
         Args: Record<PropertyKey, never>
         Returns: string
@@ -725,6 +775,10 @@ export type Database = {
           _role: Database["public"]["Enums"]["app_role"]
           _user_id: string
         }
+        Returns: boolean
+      }
+      verify_qr_scan: {
+        Args: { p_order_id: string; p_qr_secret: string; p_scan_type: string }
         Returns: boolean
       }
     }

@@ -12,6 +12,7 @@ import {
   Bell,
   Trophy
 } from "lucide-react";
+import logo from "@/assets/borrowpal-logo.png";
 import {
   Sidebar,
   SidebarContent,
@@ -53,9 +54,15 @@ export function AppSidebar() {
     <Sidebar className={collapsed ? "w-14" : "w-64"} collapsible="icon">
       <SidebarContent>
         <div className="p-4">
-          <h2 className={`font-bold text-sidebar-foreground ${collapsed ? "text-center" : ""}`}>
-            {collapsed ? "BP" : "BorrowPal"}
-          </h2>
+          <NavLink to="/dashboard" className="block">
+            {collapsed ? (
+              <div className="flex items-center justify-center">
+                <img src={logo} alt="BP" className="h-8 w-8 object-contain" />
+              </div>
+            ) : (
+              <img src={logo} alt="BorrowPal" className="h-10 w-auto" />
+            )}
+          </NavLink>
         </div>
 
         <SidebarGroup>
