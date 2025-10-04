@@ -40,7 +40,7 @@ serve(async (req) => {
     if (order.buyer_id !== user.id) throw new Error("Unauthorized");
 
     const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") || "", {
-      apiVersion: "2025-08-27.basil",
+      apiVersion: "2024-11-20.acacia",
     });
 
     // Check for existing customer
@@ -86,7 +86,7 @@ serve(async (req) => {
         },
       ],
       mode: "payment",
-      success_url: `${req.headers.get("origin")}/orders/${order_id}?payment=success`,
+      success_url: `${req.headers.get("origin")}/orders/${order_id}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${req.headers.get("origin")}/orders/${order_id}?payment=cancelled`,
       payment_intent_data: {
         metadata: {

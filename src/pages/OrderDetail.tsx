@@ -34,9 +34,9 @@ const OrderDetail = () => {
         .from('orders')
         .select(`
           *,
-          listings(*, profiles!listings_seller_id_fkey(name, avatar_url)),
-          buyer_profile:profiles!orders_buyer_id_fkey(name, avatar_url),
-          seller_profile:profiles!orders_seller_id_fkey(name, avatar_url)
+          listings(*, seller_profile:profiles!fk_listings_seller(name, avatar_url)),
+          buyer_profile:profiles!fk_orders_buyer(name, avatar_url),
+          seller_profile:profiles!fk_orders_seller(name, avatar_url)
         `)
         .eq('id', id)
         .single();
@@ -113,7 +113,7 @@ const OrderDetail = () => {
     if (isNaN(amount) || amount <= 0) return;
 
     await sendNegotiationMutation.mutateAsync({
-      action: 'counter_offer',
+      action: 'counter',
       amount,
       message: `Counter offer: $${amount} per unit`
     });
@@ -177,13 +177,24 @@ const OrderDetail = () => {
     }
   };
 
-  // Listen for payment success from URL params
+  // Listen for payment success and verify
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('payment') === 'success') {
-      toast({ title: 'Payment successful!', description: 'Your order has been confirmed' });
-      queryClient.invalidateQueries({ queryKey: ['order', id] });
-      navigate(`/orders/${id}`, { replace: true });
+    const sessionId = params.get('session_id');
+    
+    if (params.get('payment') === 'success' && sessionId) {
+      // Verify payment with backend
+      supabase.functions.invoke('verify-payment', {
+        body: { session_id: sessionId, order_id: id }
+      }).then(({ data, error }) => {
+        if (error) {
+          toast({ title: 'Payment verification failed', description: error.message, variant: 'destructive' });
+        } else {
+          toast({ title: 'Payment successful!', description: 'Your order has been confirmed' });
+          queryClient.invalidateQueries({ queryKey: ['order', id] });
+        }
+        navigate(`/orders/${id}`, { replace: true });
+      });
     }
   }, [id, toast, queryClient, navigate]);
 
@@ -209,8 +220,8 @@ const OrderDetail = () => {
 
   const isSeller = user?.id === order.seller_id;
   const isBuyer = user?.id === order.buyer_id;
-  const canChat = order.status === 'accepted' || order.status === 'paid' || order.status === 'in_progress';
-  const isPaid = !!order.stripe_payment_intent_id;
+  const isPaid = order.status === 'paid' || order.status === 'in_progress' || order.status === 'completed';
+  const canChat = order.status === 'accepted' || isPaid;
   const canGenerateQR = isPaid && !order.qr_code_data;
   const canShowQR = isPaid && order.qr_code_data && isSeller && !order.delivery_scanned_at;
   const canScanDelivery = isPaid && order.qr_code_data && isBuyer && !order.delivery_scanned_at;
@@ -356,10 +367,9 @@ const OrderDetail = () => {
                     <div className="flex-1">
                       <p className="font-medium">{(neg as any).from_profile?.name || 'User'}</p>
                       <p className="text-sm text-muted-foreground">
-                        {neg.action === 'offer' && `Offered $${neg.amount}`}
-                        {neg.action === 'counter' && `Counter offered $${neg.amount}`}
+                        {neg.action === 'counter' && `Offered $${neg.amount}`}
                         {neg.action === 'accept' && 'Accepted offer'}
-                        {neg.action === 'reject' && 'Rejected offer'}
+                        {neg.action === 'decline' && 'Declined offer'}
                       </p>
                       {neg.message && (
                         <p className="text-sm mt-1">{neg.message}</p>

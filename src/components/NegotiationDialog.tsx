@@ -66,7 +66,7 @@ export const NegotiationDialog = ({
         .insert([{
           order_id: order.id,
           from_user_id: user?.id,
-          action: 'offer',
+          action: 'counter',
           amount: offerAmount / quantity,
           message: offerMessage
         }]);

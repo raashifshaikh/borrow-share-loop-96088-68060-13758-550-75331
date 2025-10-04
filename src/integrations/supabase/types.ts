@@ -167,6 +167,34 @@ export type Database = {
             referencedRelation: "orders"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "fk_chat_from_profile"
+            columns: ["from_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fk_chat_from_profile"
+            columns: ["from_user_id"]
+            isOneToOne: false
+            referencedRelation: "user_stats"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "fk_chat_to_profile"
+            columns: ["to_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fk_chat_to_profile"
+            columns: ["to_user_id"]
+            isOneToOne: false
+            referencedRelation: "user_stats"
+            referencedColumns: ["user_id"]
+          },
         ]
       }
       listings: {
@@ -1003,7 +1031,7 @@ export type Database = {
       listing_condition: "new" | "like_new" | "good" | "fair" | "poor"
       listing_status: "active" | "paused" | "sold" | "deleted"
       listing_type: "item" | "service"
-      negotiation_action: "offer" | "accept" | "counter" | "reject"
+      negotiation_action: "accept" | "decline" | "counter"
       notification_type: "order" | "message" | "payment" | "listing" | "system"
       order_status:
         | "pending"
@@ -1148,7 +1176,7 @@ export const Constants = {
       listing_condition: ["new", "like_new", "good", "fair", "poor"],
       listing_status: ["active", "paused", "sold", "deleted"],
       listing_type: ["item", "service"],
-      negotiation_action: ["offer", "accept", "counter", "reject"],
+      negotiation_action: ["accept", "decline", "counter"],
       notification_type: ["order", "message", "payment", "listing", "system"],
       order_status: [
         "pending",

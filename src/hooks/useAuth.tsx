@@ -49,7 +49,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const signUp = async (email: string, password: string, name: string) => {
     const redirectUrl = `${window.location.origin}/`;
     
-    const { error } = await supabase.auth.signUp({
+    const { error, data } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -57,6 +57,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         data: { name }
       }
     });
+
+    // Process referral if code exists
+    if (!error && data.user) {
+      const referralCode = localStorage.getItem('referral_code');
+      if (referralCode) {
+        try {
+          await supabase.functions.invoke('process-referral', {
+            body: { referral_code: referralCode }
+          });
+          localStorage.removeItem('referral_code');
+        } catch (err) {
+          console.error('Referral processing failed:', err);
+        }
+      }
+    }
+    
     return { error };
   };
 

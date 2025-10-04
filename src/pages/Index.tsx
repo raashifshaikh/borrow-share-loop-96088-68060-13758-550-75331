@@ -1,11 +1,21 @@
+import { useEffect } from "react";
 import { Navigation } from "@/components/Navigation";
 import { HeroSection } from "@/components/HeroSection";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Package, MessageSquare, Shield, Sparkles, QrCode, Repeat } from "lucide-react";
 
 const Index = () => {
+  const [searchParams] = useSearchParams();
+
+  // Capture referral code from URL
+  useEffect(() => {
+    const refCode = searchParams.get('ref');
+    if (refCode) {
+      localStorage.setItem('referral_code', refCode);
+    }
+  }, [searchParams]);
   const features = [
     {
       icon: Package,
