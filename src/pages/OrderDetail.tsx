@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -9,10 +9,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { formatDistanceToNow } from 'date-fns';
-import { Check, X, MessageSquare, Package, CreditCard } from 'lucide-react';
+import { Check, X, MessageSquare, Package, CreditCard, QrCode, Scan, Clock, CheckCircle2 } from 'lucide-react';
+import { QRCodeDisplay } from '@/components/qr/QRCodeDisplay';
+import { QRScanner } from '@/components/qr/QRScanner';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 const OrderDetail = () => {
   const { id } = useParams();
@@ -21,6 +23,9 @@ const OrderDetail = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [counterOffer, setCounterOffer] = useState('');
+  const [showQRDialog, setShowQRDialog] = useState(false);
+  const [showScanDialog, setShowScanDialog] = useState(false);
+  const [scanType, setScanType] = useState<'delivery' | 'return' | 'service_start' | 'service_end'>('delivery');
 
   const { data: order, isLoading } = useQuery({
     queryKey: ['order', id],
@@ -135,6 +140,53 @@ const OrderDetail = () => {
     }
   };
 
+  const generateQRCode = async () => {
+    try {
+      const { data, error } = await supabase.rpc('generate_order_qr_code', { p_order_id: id });
+      if (error) throw error;
+      
+      await queryClient.invalidateQueries({ queryKey: ['order', id] });
+      setShowQRDialog(true);
+      toast({ title: 'QR Code generated!' });
+    } catch (error: any) {
+      toast({ title: 'Failed to generate QR code', description: error.message, variant: 'destructive' });
+    }
+  };
+
+  const handleQRScan = async (qrData: any) => {
+    try {
+      const { data, error } = await supabase.rpc('verify_qr_scan', {
+        p_order_id: id,
+        p_qr_secret: qrData.secret,
+        p_scan_type: scanType
+      });
+
+      if (error || !data) throw new Error('Invalid QR code');
+
+      await queryClient.invalidateQueries({ queryKey: ['order', id] });
+      setShowScanDialog(false);
+      
+      toast({
+        title: 'Scan successful!',
+        description: scanType === 'delivery' ? 'Item delivered' : 
+                     scanType === 'return' ? 'Item returned' :
+                     scanType === 'service_start' ? 'Service started' : 'Service completed'
+      });
+    } catch (error: any) {
+      toast({ title: 'Scan failed', description: error.message, variant: 'destructive' });
+    }
+  };
+
+  // Listen for payment success from URL params
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('payment') === 'success') {
+      toast({ title: 'Payment successful!', description: 'Your order has been confirmed' });
+      queryClient.invalidateQueries({ queryKey: ['order', id] });
+      navigate(`/orders/${id}`, { replace: true });
+    }
+  }, [id, toast, queryClient, navigate]);
+
   if (isLoading) {
     return (
       <DashboardLayout>
@@ -157,7 +209,24 @@ const OrderDetail = () => {
 
   const isSeller = user?.id === order.seller_id;
   const isBuyer = user?.id === order.buyer_id;
-  const canChat = order.status === 'accepted';
+  const canChat = order.status === 'accepted' || order.status === 'paid' || order.status === 'in_progress';
+  const isPaid = !!order.stripe_payment_intent_id;
+  const canGenerateQR = isPaid && !order.qr_code_data;
+  const canShowQR = isPaid && order.qr_code_data && isSeller && !order.delivery_scanned_at;
+  const canScanDelivery = isPaid && order.qr_code_data && isBuyer && !order.delivery_scanned_at;
+  const canShowReturnQR = order.delivery_scanned_at && isBuyer && !order.return_scanned_at;
+  const canScanReturn = order.delivery_scanned_at && isSeller && !order.return_scanned_at;
+
+  // Order timeline stages
+  const getOrderStage = () => {
+    if (order.return_scanned_at) return 5;
+    if (order.delivery_scanned_at) return 4;
+    if (isPaid) return 3;
+    if (order.status === 'accepted') return 2;
+    return 1;
+  };
+
+  const orderStage = getOrderStage();
 
   return (
     <DashboardLayout>
@@ -359,24 +428,171 @@ const OrderDetail = () => {
           </Card>
         )}
 
-        {isBuyer && order.status === 'accepted' && !order.stripe_payment_intent_id && (
+        {/* Payment Action */}
+        {isBuyer && order.status === 'accepted' && !isPaid && (
           <Card>
             <CardHeader>
               <CardTitle>Payment</CardTitle>
             </CardHeader>
             <CardContent>
-              <Button
-                className="w-full"
-                size="lg"
-                onClick={initiatePayment}
-              >
+              <Button className="w-full" size="lg" onClick={initiatePayment}>
                 <CreditCard className="h-5 w-5 mr-2" />
                 Proceed to Payment
               </Button>
             </CardContent>
           </Card>
         )}
+
+        {/* Order Timeline */}
+        {isPaid && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Order Progress</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  {orderStage >= 1 ? <CheckCircle2 className="h-5 w-5 text-primary" /> : <Clock className="h-5 w-5 text-muted-foreground" />}
+                  <div className="flex-1">
+                    <p className="font-medium">Order Placed</p>
+                    <p className="text-xs text-muted-foreground">{formatDistanceToNow(new Date(order.created_at))} ago</p>
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-3">
+                  {orderStage >= 2 ? <CheckCircle2 className="h-5 w-5 text-primary" /> : <Clock className="h-5 w-5 text-muted-foreground" />}
+                  <div className="flex-1">
+                    <p className="font-medium">Order Accepted</p>
+                    {order.status === 'accepted' && <p className="text-xs text-muted-foreground">Seller accepted your order</p>}
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-3">
+                  {orderStage >= 3 ? <CheckCircle2 className="h-5 w-5 text-primary" /> : <Clock className="h-5 w-5 text-muted-foreground" />}
+                  <div className="flex-1">
+                    <p className="font-medium">Payment Confirmed</p>
+                    {isPaid && <p className="text-xs text-muted-foreground">Payment processed successfully</p>}
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-3">
+                  {orderStage >= 4 ? <CheckCircle2 className="h-5 w-5 text-primary" /> : <Clock className="h-5 w-5 text-muted-foreground" />}
+                  <div className="flex-1">
+                    <p className="font-medium">Item Delivered</p>
+                    {order.delivery_scanned_at && <p className="text-xs text-muted-foreground">{formatDistanceToNow(new Date(order.delivery_scanned_at))} ago</p>}
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-3">
+                  {orderStage >= 5 ? <CheckCircle2 className="h-5 w-5 text-primary" /> : <Clock className="h-5 w-5 text-muted-foreground" />}
+                  <div className="flex-1">
+                    <p className="font-medium">Item Returned</p>
+                    {order.return_scanned_at && <p className="text-xs text-muted-foreground">Completed {formatDistanceToNow(new Date(order.return_scanned_at))} ago</p>}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* QR Code Actions */}
+        {canGenerateQR && isSeller && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Generate QR Code</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-4">Generate a QR code for item delivery tracking</p>
+              <Button onClick={generateQRCode} className="w-full">
+                <QrCode className="h-5 w-5 mr-2" />
+                Generate QR Code
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {canShowQR && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Show QR Code for Delivery</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-4">Show this QR code to the buyer when delivering the item</p>
+              <Button onClick={() => setShowQRDialog(true)} className="w-full">
+                <QrCode className="h-5 w-5 mr-2" />
+                Show QR Code
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {canScanDelivery && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Scan for Delivery</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-4">Scan the seller's QR code to confirm you received the item</p>
+              <Button onClick={() => { setScanType('delivery'); setShowScanDialog(true); }} className="w-full">
+                <Scan className="h-5 w-5 mr-2" />
+                Scan QR Code
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {canShowReturnQR && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Show QR Code for Return</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-4">Show this QR code to the seller when returning the item</p>
+              <Button onClick={() => setShowQRDialog(true)} className="w-full">
+                <QrCode className="h-5 w-5 mr-2" />
+                Show QR Code
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {canScanReturn && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Scan for Return</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-4">Scan the buyer's QR code to confirm the item has been returned</p>
+              <Button onClick={() => { setScanType('return'); setShowScanDialog(true); }} className="w-full">
+                <Scan className="h-5 w-5 mr-2" />
+                Scan QR Code
+              </Button>
+            </CardContent>
+          </Card>
+        )}
       </div>
+
+      {/* QR Code Display Dialog */}
+      <Dialog open={showQRDialog} onOpenChange={setShowQRDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>QR Code for {canShowReturnQR ? 'Return' : 'Delivery'}</DialogTitle>
+          </DialogHeader>
+          {order.qr_code_data && (
+            <QRCodeDisplay qrData={order.qr_code_data} orderType={order.listings?.type || 'item'} />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* QR Scanner Dialog */}
+      <Dialog open={showScanDialog} onOpenChange={setShowScanDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Scan QR Code</DialogTitle>
+          </DialogHeader>
+          <QRScanner onScan={handleQRScan} />
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 };

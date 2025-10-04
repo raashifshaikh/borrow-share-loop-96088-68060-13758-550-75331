@@ -4,13 +4,17 @@ import { Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface QRCodeDisplayProps {
-  value: string;
-  title: string;
-  description?: string;
+  qrData: any;
+  orderType: 'item' | 'service';
   size?: number;
 }
 
-export const QRCodeDisplay = ({ value, title, description, size = 256 }: QRCodeDisplayProps) => {
+export const QRCodeDisplay = ({ qrData, orderType, size = 256 }: QRCodeDisplayProps) => {
+  const value = JSON.stringify(qrData);
+  const title = orderType === 'item' ? 'Item Delivery QR Code' : 'Service QR Code';
+  const description = orderType === 'item' 
+    ? 'Scan this code to confirm item transfer'
+    : 'Scan this code to confirm service completion';
   const downloadQR = () => {
     const canvas = document.createElement('canvas');
     const svg = document.getElementById('qr-code-svg') as any;

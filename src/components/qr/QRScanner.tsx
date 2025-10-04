@@ -6,13 +6,13 @@ import { Camera, X, CheckCircle2, XCircle } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
 interface QRScannerProps {
-  onScan: (data: string) => void;
+  onScan: (data: any) => void;
   onError?: (error: string) => void;
-  title: string;
+  title?: string;
   description?: string;
 }
 
-export const QRScanner = ({ onScan, onError, title, description }: QRScannerProps) => {
+export const QRScanner = ({ onScan, onError, title = 'Scan QR Code', description = 'Position the QR code within the frame' }: QRScannerProps) => {
   const [isScanning, setIsScanning] = useState(false);
   const [scanResult, setScanResult] = useState<{ success: boolean; message: string } | null>(null);
   const scannerRef = useRef<Html5Qrcode | null>(null);
@@ -35,9 +35,15 @@ export const QRScanner = ({ onScan, onError, title, description }: QRScannerProp
           qrbox: { width: 250, height: 250 }
         },
         (decodedText) => {
-          setScanResult({ success: true, message: 'QR Code scanned successfully!' });
-          onScan(decodedText);
-          stopScanning();
+          try {
+            const parsedData = JSON.parse(decodedText);
+            setScanResult({ success: true, message: 'QR Code scanned successfully!' });
+            onScan(parsedData);
+            stopScanning();
+          } catch (err) {
+            setScanResult({ success: false, message: 'Invalid QR code format' });
+            if (onError) onError('Invalid QR code');
+          }
         },
         (errorMessage) => {
           // Ignore errors, they happen frequently during scanning

@@ -1,20 +1,33 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { useQuery } from '@tanstack/react-query';
+import { Badge } from '@/components/ui/badge';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { formatDistanceToNow } from 'date-fns';
-import { Send, MessageSquare } from 'lucide-react';
+import { Send, MessageSquare, Package, DollarSign } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import { useToast } from '@/hooks/use-toast';
 
 const Messages = () => {
   const { user } = useAuth();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
+  const orderId = searchParams.get('order');
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState('');
+  const [showNegotiationDialog, setShowNegotiationDialog] = useState(false);
+  const [negotiationAmount, setNegotiationAmount] = useState('');
+  const [negotiationMessage, setNegotiationMessage] = useState('');
 
   // Get all conversations for the user
   const { data: conversations } = useQuery({
@@ -77,6 +90,21 @@ const Messages = () => {
     enabled: !!selectedConversation && !!user?.id
   });
 
+  // Get order context if linked
+  const { data: orderContext } = useQuery({
+    queryKey: ['order-context', orderId],
+    queryFn: async () => {
+      if (!orderId) return null;
+      const { data } = await supabase
+        .from('orders')
+        .select('*, listings(title, type)')
+        .eq('id', orderId)
+        .single();
+      return data;
+    },
+    enabled: !!orderId
+  });
+
   const sendMessage = async () => {
     if (!newMessage.trim() || !selectedConversation || !user?.id) return;
 
@@ -85,14 +113,54 @@ const Messages = () => {
       .insert([{
         from_user_id: user.id,
         to_user_id: selectedConversation,
-        message_text: newMessage.trim()
+        message_text: newMessage.trim(),
+        order_id: orderId || null
       }]);
 
     if (!error) {
       setNewMessage('');
-      // Refetch messages
+      queryClient.invalidateQueries({ queryKey: ['messages', selectedConversation, user?.id] });
+      queryClient.invalidateQueries({ queryKey: ['conversations', user?.id] });
     }
   };
+
+  const sendNegotiationMutation = useMutation({
+    mutationFn: async () => {
+      if (!orderId) throw new Error('No order context');
+      
+      const { error } = await supabase
+        .from('order_negotiations')
+        .insert([{
+          order_id: orderId,
+          from_user_id: user?.id,
+          action: 'counter',
+          amount: parseFloat(negotiationAmount),
+          message: negotiationMessage
+        }]);
+
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast({ title: 'Counter offer sent!', description: 'The other party will review your offer' });
+      setShowNegotiationDialog(false);
+      setNegotiationAmount('');
+      setNegotiationMessage('');
+      queryClient.invalidateQueries({ queryKey: ['negotiations', orderId] });
+    },
+    onError: (error: any) => {
+      toast({ title: 'Failed to send offer', description: error.message, variant: 'destructive' });
+    }
+  });
+
+  // Auto-select conversation from order context
+  useEffect(() => {
+    if (orderContext && user) {
+      const otherUserId = orderContext.seller_id === user.id 
+        ? orderContext.buyer_id 
+        : orderContext.seller_id;
+      setSelectedConversation(otherUserId);
+    }
+  }, [orderContext, user]);
 
   return (
     <DashboardLayout>
@@ -152,6 +220,34 @@ const Messages = () => {
         <Card className="flex-1 flex flex-col">
           {selectedConversation ? (
             <>
+              {/* Order Context Banner */}
+              {orderContext && (
+                <div className="bg-muted p-4 border-b">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Package className="h-5 w-5 text-primary" />
+                      <div>
+                        <p className="font-medium">{orderContext.listings?.title}</p>
+                        <p className="text-sm text-muted-foreground">
+                          Order #{orderContext.id.slice(0, 8)} • ${orderContext.final_amount}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Badge variant={orderContext.status === 'accepted' ? 'default' : 'secondary'}>
+                        {orderContext.status}
+                      </Badge>
+                      {orderContext.status === 'pending' && (
+                        <Button size="sm" variant="outline" onClick={() => setShowNegotiationDialog(true)}>
+                          <DollarSign className="h-4 w-4 mr-1" />
+                          Negotiate
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <CardContent className="flex-1 p-0">
                 <ScrollArea className="h-full p-4">
                   <div className="space-y-4">
@@ -207,6 +303,52 @@ const Messages = () => {
           )}
         </Card>
       </div>
+
+      {/* Negotiation Dialog */}
+      <Dialog open={showNegotiationDialog} onOpenChange={setShowNegotiationDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Make a Counter Offer</DialogTitle>
+            <DialogDescription>
+              Current order amount: ${orderContext?.final_amount}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Your Offer Amount</Label>
+              <Input
+                type="number"
+                step="0.01"
+                placeholder="Enter amount"
+                value={negotiationAmount}
+                onChange={(e) => setNegotiationAmount(e.target.value)}
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label>Message (Optional)</Label>
+              <Textarea
+                placeholder="Explain your offer..."
+                value={negotiationMessage}
+                onChange={(e) => setNegotiationMessage(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowNegotiationDialog(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={() => sendNegotiationMutation.mutate()}
+              disabled={!negotiationAmount || sendNegotiationMutation.isPending}
+            >
+              Send Offer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 };

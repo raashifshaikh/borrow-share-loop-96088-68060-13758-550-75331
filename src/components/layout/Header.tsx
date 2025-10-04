@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
 import { LogOut, User } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { NotificationBell } from './NotificationBell';
 
 export const Header = () => {
   const { signOut, user } = useAuth();
@@ -12,6 +13,7 @@ export const Header = () => {
       <SidebarTrigger />
       
       <div className="flex items-center gap-2">
+        <NotificationBell />
         <Link to="/profile">
           <Button variant="ghost" size="sm">
             <User className="h-4 w-4 mr-2" />

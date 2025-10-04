@@ -799,6 +799,7 @@ export type Database = {
         | "completed"
         | "cancelled"
         | "rejected"
+        | "in_progress"
       price_type: "fixed" | "hourly" | "per_day" | "negotiable"
     }
     CompositeTypes: {
@@ -943,6 +944,7 @@ export const Constants = {
         "completed",
         "cancelled",
         "rejected",
+        "in_progress",
       ],
       price_type: ["fixed", "hourly", "per_day", "negotiable"],
     },
