@@ -246,17 +246,31 @@ const Orders = () => {
   // Mutations for accept/decline
   const updateOrderMutation = useMutation({
     mutationFn: async ({ orderId, status }: { orderId: string; status: 'accepted' | 'cancelled' }) => {
-      console.log('Updating order:', { orderId, status });
+      if (!user?.id) {
+        throw new Error('You must be logged in to update orders');
+      }
+
+      console.log('Updating order:', { orderId, status, userId: user.id });
       
       const { data, error } = await supabase
         .from('orders')
         .update({ status })
         .eq('id', orderId)
-        .select();
+        .select()
+        .single();
       
       if (error) {
-        console.error('Update error details:', error);
-        throw error;
+        console.error('Update error details:', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code
+        });
+        throw new Error(error.message || 'Failed to update order');
+      }
+      
+      if (!data) {
+        throw new Error('No data returned after update');
       }
       
       console.log('Update successful:', data);
@@ -270,12 +284,13 @@ const Orders = () => {
           : 'The order has been cancelled'
       });
       queryClient.invalidateQueries({ queryKey: ['lent-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['borrowed-orders'] });
     },
     onError: (error: any) => {
       console.error('Mutation error:', error);
       toast({
-        title: 'Error',
-        description: error?.message || 'Failed to update order status',
+        title: 'Update Failed',
+        description: error?.message || 'Could not update order status. Please try again.',
         variant: 'destructive'
       });
     }
@@ -283,11 +298,30 @@ const Orders = () => {
 
   const updateServiceOrderMutation = useMutation({
     mutationFn: async ({ orderId, status }: { orderId: string; status: string }) => {
-      const { error } = await supabase
+      if (!user?.id) {
+        throw new Error('You must be logged in to update service orders');
+      }
+
+      console.log('Updating service order:', { orderId, status, userId: user.id });
+
+      const { data, error } = await supabase
         .from('service_orders')
         .update({ status })
-        .eq('id', orderId);
-      if (error) throw error;
+        .eq('id', orderId)
+        .select()
+        .single();
+      
+      if (error) {
+        console.error('Service order update error:', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code
+        });
+        throw new Error(error.message || 'Failed to update service order');
+      }
+
+      return data;
     },
     onSuccess: (_, variables) => {
       toast({
@@ -297,14 +331,15 @@ const Orders = () => {
           : 'The request has been declined'
       });
       queryClient.invalidateQueries({ queryKey: ['service-orders-provided'] });
+      queryClient.invalidateQueries({ queryKey: ['service-orders-booked'] });
     },
-    onError: (error) => {
+    onError: (error: any) => {
+      console.error('Service order mutation error:', error);
       toast({
-        title: 'Error',
-        description: 'Failed to update request status',
+        title: 'Update Failed',
+        description: error?.message || 'Could not update service order. Please try again.',
         variant: 'destructive'
       });
-      console.error('Error updating service order:', error);
     }
   });
 
