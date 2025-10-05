@@ -1032,7 +1032,13 @@ export type Database = {
       listing_status: "active" | "paused" | "sold" | "deleted"
       listing_type: "item" | "service"
       negotiation_action: "accept" | "decline" | "counter"
-      notification_type: "order" | "message" | "payment" | "listing" | "system"
+      notification_type:
+        | "order"
+        | "message"
+        | "payment"
+        | "listing"
+        | "system"
+        | "order_update"
       order_status:
         | "pending"
         | "negotiating"
@@ -1177,7 +1183,14 @@ export const Constants = {
       listing_status: ["active", "paused", "sold", "deleted"],
       listing_type: ["item", "service"],
       negotiation_action: ["accept", "decline", "counter"],
-      notification_type: ["order", "message", "payment", "listing", "system"],
+      notification_type: [
+        "order",
+        "message",
+        "payment",
+        "listing",
+        "system",
+        "order_update",
+      ],
       order_status: [
         "pending",
         "negotiating",
