@@ -246,11 +246,21 @@ const Orders = () => {
   // Mutations for accept/decline
   const updateOrderMutation = useMutation({
     mutationFn: async ({ orderId, status }: { orderId: string; status: 'accepted' | 'cancelled' }) => {
-      const { error } = await supabase
+      console.log('Updating order:', { orderId, status });
+      
+      const { data, error } = await supabase
         .from('orders')
         .update({ status })
-        .eq('id', orderId);
-      if (error) throw error;
+        .eq('id', orderId)
+        .select();
+      
+      if (error) {
+        console.error('Update error details:', error);
+        throw error;
+      }
+      
+      console.log('Update successful:', data);
+      return data;
     },
     onSuccess: (_, variables) => {
       toast({
@@ -261,13 +271,13 @@ const Orders = () => {
       });
       queryClient.invalidateQueries({ queryKey: ['lent-orders'] });
     },
-    onError: (error) => {
+    onError: (error: any) => {
+      console.error('Mutation error:', error);
       toast({
         title: 'Error',
-        description: 'Failed to update order status',
+        description: error?.message || 'Failed to update order status',
         variant: 'destructive'
       });
-      console.error('Error updating order:', error);
     }
   });
 
