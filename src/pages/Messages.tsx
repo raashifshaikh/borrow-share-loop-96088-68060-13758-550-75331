@@ -23,6 +23,10 @@ const Messages = () => {
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const orderId = searchParams.get('order');
+  // New: support seller and listing params for unique chat
+  const sellerId = searchParams.get('seller');
+  const listingId = searchParams.get('listing');
+  // Use a composite key for unique chat per seller+listing
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState('');
   const [showNegotiationDialog, setShowNegotiationDialog] = useState(false);
@@ -30,7 +34,7 @@ const Messages = () => {
   const [negotiationMessage, setNegotiationMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
 
-  // Get all conversations for the user
+  // Get all conversations for the user, grouped by seller+listing for uniqueness
   const { data: conversations } = useQuery({
     queryKey: ['conversations', user?.id],
     queryFn: async () => {
@@ -42,49 +46,50 @@ const Messages = () => {
         .or(`from_user_id.eq.${user.id},to_user_id.eq.${user.id}`)
         .order('created_at', { ascending: false });
 
-      // Group messages by conversation (unique combination of users)
+      // Group by otherUserId + listing_id for unique chat per item/service
       const conversationMap = new Map();
       data?.forEach(message => {
         const otherUserId = message.from_user_id === user.id 
           ? message.to_user_id 
           : message.from_user_id;
-        // Fallback: no profile join, so just use IDs
-        if (!conversationMap.has(otherUserId) || 
-            new Date(message.created_at) > new Date(conversationMap.get(otherUserId).created_at)) {
-          conversationMap.set(otherUserId, {
+        const key = `${otherUserId}_${message.listing_id || ''}`;
+        if (!conversationMap.has(key) || 
+            new Date(message.created_at) > new Date(conversationMap.get(key).created_at)) {
+          conversationMap.set(key, {
             ...message,
             otherUserId,
+            listingId: message.listing_id,
             otherUser: {
               name: 'Unknown User',
               avatar_url: '',
-              // You can add more fallback fields if needed
             }
           });
         }
       });
-
       return Array.from(conversationMap.values());
     },
     enabled: !!user?.id
   });
 
-  // Get messages for selected conversation
+  // Get messages for selected conversation (by seller+listing)
   const { data: messages } = useQuery({
-    queryKey: ['messages', selectedConversation, user?.id],
+    queryKey: ['messages', selectedConversation, listingId, user?.id],
     queryFn: async () => {
       if (!selectedConversation || !user?.id) return [];
 
+      // Only fetch messages for this seller+listing
       const { data } = await supabase
         .from('chat_messages')
         .select('*')
         .or(
           `and(from_user_id.eq.${user.id},to_user_id.eq.${selectedConversation}),and(from_user_id.eq.${selectedConversation},to_user_id.eq.${user.id})`
         )
+        .eq('listing_id', listingId)
         .order('created_at', { ascending: true });
 
       return data || [];
     },
-    enabled: !!selectedConversation && !!user?.id
+    enabled: !!selectedConversation && !!user?.id && !!listingId
   });
 
   // Get order context if linked
@@ -173,15 +178,21 @@ const Messages = () => {
     }
   });
 
-  // Auto-select conversation from order context
+  // Auto-select conversation from query params (seller+listing)
   useEffect(() => {
-    if (orderContext && user) {
+    if (sellerId && listingId && user) {
+      // Don't allow chatting with yourself
+      if (sellerId !== user.id) {
+        setSelectedConversation(sellerId);
+      }
+    } else if (orderContext && user) {
+      // fallback: order context
       const otherUserId = orderContext.seller_id === user.id 
         ? orderContext.buyer_id 
         : orderContext.seller_id;
       setSelectedConversation(otherUserId);
     }
-  }, [orderContext, user]);
+  }, [sellerId, listingId, user, orderContext]);
 
   // Setup realtime subscription for new messages (fix: listen to all inserts, filter in callback)
   useEffect(() => {
