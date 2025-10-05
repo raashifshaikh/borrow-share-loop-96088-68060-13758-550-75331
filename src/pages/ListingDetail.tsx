@@ -155,6 +155,9 @@ const ListingDetail = () => {
   const avgRating = reviews?.length ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length : 0;
   const isOwner = user?.id === listing.seller_id;
 
+  // Helper: Build chat link for this listing and seller
+  const chatLink = `/messages?seller=${listing.seller_id}&listing=${listing.id}`;
+
   return (
     <DashboardLayout>
       <div className="max-w-6xl mx-auto space-y-6">
@@ -256,9 +259,17 @@ const ListingDetail = () => {
                     )}
                   </div>
                   {!isOwner && (
-                    <Link to={`/profile/${listing.seller_id}`}>
-                      <Button variant="outline" size="sm">View Profile</Button>
-                    </Link>
+                    <>
+                      <Link to={chatLink}>
+                        <Button variant="secondary" size="sm" className="mr-2">
+                          <MessageSquare className="h-4 w-4 mr-1" />
+                          Open Chat
+                        </Button>
+                      </Link>
+                      <Link to={`/profile/${listing.seller_id}`}>
+                        <Button variant="outline" size="sm">View Profile</Button>
+                      </Link>
+                    </>
                   )}
                 </div>
               </CardContent>
