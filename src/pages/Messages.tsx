@@ -38,12 +38,7 @@ const Messages = () => {
 
       const { data } = await supabase
         .from('chat_messages')
-        .select(`
-          *,
-          from_profile:profiles!chat_messages_from_user_id_fkey(name, avatar_url),
-          to_profile:profiles!chat_messages_to_user_id_fkey(name, avatar_url),
-          listings(title)
-        `)
+        .select('*')
         .or(`from_user_id.eq.${user.id},to_user_id.eq.${user.id}`)
         .order('created_at', { ascending: false });
 
