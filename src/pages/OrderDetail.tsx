@@ -34,9 +34,9 @@ const OrderDetail = () => {
         .from('orders')
         .select(`
           *,
-          listings(*, seller_profile:profiles!fk_listings_seller(name, avatar_url)),
-          buyer_profile:profiles!fk_orders_buyer(name, avatar_url),
-          seller_profile:profiles!fk_orders_seller(name, avatar_url)
+          listings(*, seller_profile:profiles!listings_seller_id_fkey(name, avatar_url)),
+          buyer_profile:profiles!orders_buyer_id_fkey(name, avatar_url),
+          seller_profile:profiles!orders_seller_id_fkey(name, avatar_url)
         `)
         .eq('id', id)
         .single();
@@ -88,7 +88,11 @@ const OrderDetail = () => {
 
   const handleAcceptOrder = async () => {
     await updateOrderMutation.mutateAsync({ status: 'accepted' });
-    toast({ title: 'Order accepted!', description: 'You can now chat with the buyer' });
+    toast({ 
+      title: 'Order accepted!', 
+      description: 'The buyer will be notified and can proceed to payment'
+    });
+    // Stay on the same page to show next steps
   };
 
   const handleDeclineOrder = async () => {
@@ -190,8 +194,14 @@ const OrderDetail = () => {
         if (error) {
           toast({ title: 'Payment verification failed', description: error.message, variant: 'destructive' });
         } else {
-          toast({ title: 'Payment successful!', description: 'Your order has been confirmed' });
+          toast({ title: 'Payment successful!', description: 'Your order has been confirmed. QR code will be generated automatically.' });
           queryClient.invalidateQueries({ queryKey: ['order', id] });
+          // Auto-generate QR code after payment
+          setTimeout(() => {
+            supabase.rpc('generate_order_qr_code', { p_order_id: id }).then(() => {
+              queryClient.invalidateQueries({ queryKey: ['order', id] });
+            });
+          }, 1000);
         }
         navigate(`/orders/${id}`, { replace: true });
       });
@@ -260,7 +270,7 @@ const OrderDetail = () => {
           </Badge>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-6">
+        <div className="grid gap-6 md:grid-cols-2">
           {/* Order Info */}
           <Card>
             <CardHeader>
@@ -322,7 +332,7 @@ const OrderDetail = () => {
                 <p className="text-sm font-medium mb-2">Buyer</p>
                 <div className="flex items-center gap-2">
                   <Package className="h-4 w-4 text-muted-foreground" />
-                  <span>{(order as any).buyer_profile?.name || 'N/A'}</span>
+                  <span className="truncate">{(order as any).buyer_profile?.name || 'N/A'}</span>
                 </div>
               </div>
 
@@ -332,14 +342,14 @@ const OrderDetail = () => {
                 <p className="text-sm font-medium mb-2">Seller</p>
                 <div className="flex items-center gap-2">
                   <Package className="h-4 w-4 text-muted-foreground" />
-                  <span>{(order as any).seller_profile?.name || 'N/A'}</span>
+                  <span className="truncate">{(order as any).seller_profile?.name || 'N/A'}</span>
                 </div>
               </div>
 
               {canChat && (
                 <>
                   <Separator />
-                  <Link to={`/messages?order=${id}`} className="w-full">
+                  <Link to={`/messages?order=${id}`} className="block w-full">
                     <Button className="w-full" variant="outline">
                       <MessageSquare className="h-4 w-4 mr-2" />
                       Open Chat
@@ -414,41 +424,66 @@ const OrderDetail = () => {
         {isSeller && order.status === 'pending' && negotiations.length === 0 && (
           <Card>
             <CardHeader>
-              <CardTitle>Actions</CardTitle>
+              <CardTitle>Action Required</CardTitle>
             </CardHeader>
-            <CardContent className="flex gap-4">
-              <Button
-                className="flex-1"
-                onClick={handleAcceptOrder}
-                disabled={updateOrderMutation.isPending}
-              >
-                <Check className="h-4 w-4 mr-2" />
-                Accept Order
-              </Button>
-              <Button
-                className="flex-1"
-                variant="destructive"
-                onClick={handleDeclineOrder}
-                disabled={updateOrderMutation.isPending}
-              >
-                <X className="h-4 w-4 mr-2" />
-                Decline Order
-              </Button>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Review this order and decide whether to accept or decline it.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Button
+                  className="flex-1"
+                  onClick={handleAcceptOrder}
+                  disabled={updateOrderMutation.isPending}
+                >
+                  <Check className="h-4 w-4 mr-2" />
+                  Accept Order
+                </Button>
+                <Button
+                  className="flex-1"
+                  variant="destructive"
+                  onClick={handleDeclineOrder}
+                  disabled={updateOrderMutation.isPending}
+                >
+                  <X className="h-4 w-4 mr-2" />
+                  Decline Order
+                </Button>
+              </div>
             </CardContent>
           </Card>
         )}
 
         {/* Payment Action */}
         {isBuyer && order.status === 'accepted' && !isPaid && (
-          <Card>
+          <Card className="border-primary">
             <CardHeader>
-              <CardTitle>Payment</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                <CreditCard className="h-5 w-5" />
+                Next Step: Payment Required
+              </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                The seller has accepted your order. Complete payment to proceed with delivery.
+              </p>
               <Button className="w-full" size="lg" onClick={initiatePayment}>
                 <CreditCard className="h-5 w-5 mr-2" />
                 Proceed to Payment
               </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Next Steps Card for Seller After Acceptance */}
+        {isSeller && order.status === 'accepted' && !isPaid && (
+          <Card className="border-primary">
+            <CardHeader>
+              <CardTitle>✓ Order Accepted</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                The buyer has been notified and will complete payment shortly. Once payment is confirmed, you can generate a QR code for delivery tracking.
+              </p>
             </CardContent>
           </Card>
         )}

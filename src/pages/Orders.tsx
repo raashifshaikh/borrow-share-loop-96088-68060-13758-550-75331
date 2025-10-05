@@ -29,7 +29,7 @@ const Orders = () => {
         .select(`
           *,
           listings (title, images, seller_id),
-          seller_profile:profiles!fk_orders_seller (name)
+          seller_profile:profiles!orders_seller_id_fkey (name)
         `)
         .eq('buyer_id', user.id)
         .order('created_at', { ascending: false });
@@ -50,7 +50,7 @@ const Orders = () => {
         .select(`
           *,
           listings (title, images),
-          buyer_profile:profiles!fk_orders_buyer (name)
+          buyer_profile:profiles!orders_buyer_id_fkey (name)
         `)
         .eq('seller_id', user.id)
         .order('created_at', { ascending: false });
@@ -103,47 +103,79 @@ const Orders = () => {
     enabled: !!user?.id
   });
 
-  // Realtime subscriptions
+  // Realtime subscriptions - separate channels for buyer and seller
   useEffect(() => {
     if (!user?.id) return;
 
-    const ordersChannel = supabase
-      .channel('orders-changes')
+    const buyerOrdersChannel = supabase
+      .channel('buyer-orders-changes')
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
           table: 'orders',
-          filter: `buyer_id=eq.${user.id},seller_id=eq.${user.id}`
+          filter: `buyer_id=eq.${user.id}`
         },
         () => {
           queryClient.invalidateQueries({ queryKey: ['borrowed-orders'] });
+        }
+      )
+      .subscribe();
+
+    const sellerOrdersChannel = supabase
+      .channel('seller-orders-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'orders',
+          filter: `seller_id=eq.${user.id}`
+        },
+        () => {
           queryClient.invalidateQueries({ queryKey: ['lent-orders'] });
         }
       )
       .subscribe();
 
-    const serviceOrdersChannel = supabase
-      .channel('service-orders-changes')
+    const buyerServiceOrdersChannel = supabase
+      .channel('buyer-service-orders-changes')
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
           table: 'service_orders',
-          filter: `buyer_id=eq.${user.id},provider_id=eq.${user.id}`
+          filter: `buyer_id=eq.${user.id}`
         },
         () => {
           queryClient.invalidateQueries({ queryKey: ['service-orders-booked'] });
+        }
+      )
+      .subscribe();
+
+    const providerServiceOrdersChannel = supabase
+      .channel('provider-service-orders-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'service_orders',
+          filter: `provider_id=eq.${user.id}`
+        },
+        () => {
           queryClient.invalidateQueries({ queryKey: ['service-orders-provided'] });
         }
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(ordersChannel);
-      supabase.removeChannel(serviceOrdersChannel);
+      supabase.removeChannel(buyerOrdersChannel);
+      supabase.removeChannel(sellerOrdersChannel);
+      supabase.removeChannel(buyerServiceOrdersChannel);
+      supabase.removeChannel(providerServiceOrdersChannel);
     };
   }, [user?.id, queryClient]);
 
