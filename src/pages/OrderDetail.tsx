@@ -26,6 +26,7 @@ const OrderDetail = () => {
   const [showQRDialog, setShowQRDialog] = useState(false);
   const [showScanDialog, setShowScanDialog] = useState(false);
   const [scanType, setScanType] = useState<'delivery' | 'return' | 'service_start' | 'service_end'>('delivery');
+  const [isPaymentLoading, setIsPaymentLoading] = useState(false);
 
   const { data: order, isLoading } = useQuery({
     queryKey: ['order', id],
@@ -37,12 +38,19 @@ const OrderDetail = () => {
         .single();
 
       if (error) throw error;
+      if (!data) throw new Error('Order not found');
       
-      // Fetch related data separately
+      // Fetch related data separately with error handling
       const [listingData, buyerData, sellerData] = await Promise.all([
-        supabase.from('listings').select('*, seller_profile:profiles(name, avatar_url)').eq('id', data.listing_id).single(),
-        supabase.from('profiles').select('name, avatar_url').eq('id', data.buyer_id).single(),
-        supabase.from('profiles').select('name, avatar_url').eq('id', data.seller_id).single()
+        data.listing_id 
+          ? supabase.from('listings').select('*, seller_profile:profiles(name, avatar_url)').eq('id', data.listing_id).single()
+          : Promise.resolve({ data: null, error: null }),
+        data.buyer_id
+          ? supabase.from('profiles').select('name, avatar_url').eq('id', data.buyer_id).single()
+          : Promise.resolve({ data: null, error: null }),
+        data.seller_id
+          ? supabase.from('profiles').select('name, avatar_url').eq('id', data.seller_id).single()
+          : Promise.resolve({ data: null, error: null })
       ]);
 
       return {
@@ -153,6 +161,7 @@ const OrderDetail = () => {
   };
 
   const initiatePayment = async () => {
+    setIsPaymentLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke('create-payment', {
         body: { order_id: id }
@@ -161,14 +170,38 @@ const OrderDetail = () => {
       if (error) throw error;
 
       if (data?.url) {
-        window.open(data.url, '_blank');
+        const paymentWindow = window.open(data.url, '_blank');
+        
+        if (!paymentWindow || paymentWindow.closed || typeof paymentWindow.closed === 'undefined') {
+          toast({
+            title: 'Popup blocked',
+            description: 'Please allow popups or we will redirect you',
+            variant: 'destructive'
+          });
+          setTimeout(() => {
+            window.location.href = data.url;
+          }, 2000);
+        } else {
+          toast({
+            title: 'Redirecting to payment...',
+            description: 'Complete your payment in the new window'
+          });
+        }
       }
     } catch (error: any) {
+      const errorMessage = error.message || 'Unknown error occurred';
+      const isStripeError = errorMessage.includes('stripe') || errorMessage.includes('payment');
+      
       toast({
-        title: 'Payment failed',
-        description: error.message,
+        title: 'Payment initialization failed',
+        description: isStripeError 
+          ? 'Payment service error. Please try again or contact support.' 
+          : errorMessage,
         variant: 'destructive'
       });
+      console.error('Payment error:', error);
+    } finally {
+      setIsPaymentLoading(false);
     }
   };
 
@@ -497,9 +530,14 @@ const OrderDetail = () => {
               <p className="text-sm text-muted-foreground">
                 The seller has accepted your order. Complete payment to proceed with delivery.
               </p>
-              <Button className="w-full min-h-[52px]" size="lg" onClick={initiatePayment}>
+              <Button 
+                className="w-full min-h-[52px]" 
+                size="lg" 
+                onClick={initiatePayment}
+                disabled={isPaymentLoading}
+              >
                 <CreditCard className="h-6 w-6 mr-2" />
-                Proceed to Payment
+                {isPaymentLoading ? 'Processing...' : 'Proceed to Payment'}
               </Button>
             </CardContent>
           </Card>

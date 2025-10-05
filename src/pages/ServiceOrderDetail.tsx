@@ -29,12 +29,19 @@ const ServiceOrderDetail = () => {
         .single();
 
       if (error) throw error;
+      if (!data) throw new Error('Service order not found');
       
-      // Fetch related data separately
+      // Fetch related data separately with error handling
       const [serviceData, buyerData, providerData] = await Promise.all([
-        supabase.from('services').select('id, title, description, category, price, duration_hours, images, provider_id').eq('id', data.service_id).single(),
-        supabase.from('profiles').select('id, name, avatar_url, email').eq('id', data.buyer_id).single(),
-        supabase.from('profiles').select('id, name, avatar_url, email').eq('id', data.provider_id).single()
+        data.service_id
+          ? supabase.from('services').select('id, title, description, category, price, duration_hours, images, provider_id').eq('id', data.service_id).single()
+          : Promise.resolve({ data: null, error: null }),
+        data.buyer_id
+          ? supabase.from('profiles').select('id, name, avatar_url, email').eq('id', data.buyer_id).single()
+          : Promise.resolve({ data: null, error: null }),
+        data.provider_id
+          ? supabase.from('profiles').select('id, name, avatar_url, email').eq('id', data.provider_id).single()
+          : Promise.resolve({ data: null, error: null })
       ]);
 
       return {

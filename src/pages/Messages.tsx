@@ -28,6 +28,7 @@ const Messages = () => {
   const [showNegotiationDialog, setShowNegotiationDialog] = useState(false);
   const [negotiationAmount, setNegotiationAmount] = useState('');
   const [negotiationMessage, setNegotiationMessage] = useState('');
+  const [isSending, setIsSending] = useState(false);
 
   // Get all conversations for the user
   const { data: conversations } = useQuery({
@@ -106,21 +107,45 @@ const Messages = () => {
   });
 
   const sendMessage = async () => {
-    if (!newMessage.trim() || !selectedConversation || !user?.id) return;
+    if (!newMessage.trim() || !selectedConversation || !user?.id || isSending) return;
 
-    const { error } = await supabase
-      .from('chat_messages')
-      .insert([{
-        from_user_id: user.id,
-        to_user_id: selectedConversation,
-        message_text: newMessage.trim(),
-        order_id: orderId || null
-      }]);
+    const messageText = newMessage.trim();
+    const tempId = `temp-${Date.now()}`;
+    
+    // Optimistic update
+    setNewMessage('');
+    setIsSending(true);
 
-    if (!error) {
-      setNewMessage('');
+    try {
+      const { error } = await supabase
+        .from('chat_messages')
+        .insert([{
+          from_user_id: user.id,
+          to_user_id: selectedConversation,
+          message_text: messageText,
+          order_id: orderId || null
+        }]);
+
+      if (error) throw error;
+
       queryClient.invalidateQueries({ queryKey: ['messages', selectedConversation, user?.id] });
       queryClient.invalidateQueries({ queryKey: ['conversations', user?.id] });
+      
+      toast({ 
+        title: 'Message sent',
+        description: 'Your message was delivered successfully' 
+      });
+    } catch (error: any) {
+      console.error('Failed to send message:', error);
+      setNewMessage(messageText); // Restore message on error
+      
+      toast({
+        title: 'Failed to send message',
+        description: error.message || 'Please check your connection and try again',
+        variant: 'destructive'
+      });
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -161,6 +186,32 @@ const Messages = () => {
       setSelectedConversation(otherUserId);
     }
   }, [orderContext, user]);
+
+  // Setup realtime subscription for new messages
+  useEffect(() => {
+    if (!selectedConversation || !user?.id) return;
+
+    const channel = supabase
+      .channel(`messages:${selectedConversation}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'chat_messages',
+          filter: `to_user_id=eq.${user.id}`
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['messages', selectedConversation, user.id] });
+          queryClient.invalidateQueries({ queryKey: ['conversations', user.id] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [selectedConversation, user?.id, queryClient]);
 
   return (
     <DashboardLayout>
@@ -287,7 +338,10 @@ const Messages = () => {
                     placeholder="Type a message..."
                     onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
                   />
-                  <Button onClick={sendMessage} disabled={!newMessage.trim()}>
+                  <Button 
+                    onClick={sendMessage} 
+                    disabled={!newMessage.trim() || isSending}
+                  >
                     <Send className="h-4 w-4" />
                   </Button>
                 </div>
