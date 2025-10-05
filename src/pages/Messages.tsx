@@ -48,15 +48,17 @@ const Messages = () => {
         const otherUserId = message.from_user_id === user.id 
           ? message.to_user_id 
           : message.from_user_id;
-        
+        // Fallback: no profile join, so just use IDs
         if (!conversationMap.has(otherUserId) || 
             new Date(message.created_at) > new Date(conversationMap.get(otherUserId).created_at)) {
           conversationMap.set(otherUserId, {
             ...message,
             otherUserId,
-            otherUser: message.from_user_id === user.id 
-              ? message.to_profile 
-              : message.from_profile
+            otherUser: {
+              name: 'Unknown User',
+              avatar_url: '',
+              // You can add more fallback fields if needed
+            }
           });
         }
       });
@@ -242,7 +244,7 @@ const Messages = () => {
                     >
                       <div className="flex items-center gap-3">
                         <Avatar>
-                          <AvatarImage src={conversation.otherUser?.avatar_url} />
+                          <AvatarImage src={conversation.otherUser?.avatar_url || ''} />
                           <AvatarFallback>
                             {conversation.otherUser?.name?.[0] || 'U'}
                           </AvatarFallback>
@@ -278,7 +280,7 @@ const Messages = () => {
                     <div className="flex items-center gap-3">
                       <Package className="h-5 w-5 text-primary" />
                       <div>
-                        <p className="font-medium">{orderContext.listings?.title}</p>
+                        <p className="font-medium">{orderContext.listings?.title || 'Listing'}</p>
                         <p className="text-sm text-muted-foreground">
                           Order #{orderContext.id.slice(0, 8)} • ${orderContext.final_amount}
                         </p>
