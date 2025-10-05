@@ -189,23 +189,29 @@ const Messages = () => {
     }
   }, [orderContext, user]);
 
-  // Setup realtime subscription for new messages
+  // Setup realtime subscription for new messages (fix: listen to all inserts, filter in callback)
   useEffect(() => {
     if (!selectedConversation || !user?.id) return;
 
     const channel = supabase
-      .channel(`messages:${selectedConversation}`)
+      .channel('chat_messages_realtime')
       .on(
         'postgres_changes',
         {
           event: 'INSERT',
           schema: 'public',
           table: 'chat_messages',
-          filter: `to_user_id=eq.${user.id}`
         },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ['messages', selectedConversation, user.id] });
-          queryClient.invalidateQueries({ queryKey: ['conversations', user.id] });
+        (payload) => {
+          const newMsg = payload.new;
+          // Only update if the message is between these two users
+          if (
+            [newMsg.from_user_id, newMsg.to_user_id].includes(user.id) &&
+            [newMsg.from_user_id, newMsg.to_user_id].includes(selectedConversation)
+          ) {
+            queryClient.invalidateQueries({ queryKey: ['messages', selectedConversation, user.id] });
+            queryClient.invalidateQueries({ queryKey: ['conversations', user.id] });
+          }
         }
       )
       .subscribe();
