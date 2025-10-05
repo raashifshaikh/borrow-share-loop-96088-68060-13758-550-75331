@@ -83,10 +83,12 @@ const Messages = () => {
           *,
           from_profile:profiles!chat_messages_from_user_id_fkey(name, avatar_url)
         `)
-        .or(`and(from_user_id.eq.${user.id},to_user_id.eq.${selectedConversation}),and(from_user_id.eq.${selectedConversation},to_user_id.eq.${user.id})`)
+        .in('from_user_id', [user.id, selectedConversation])
+        .in('to_user_id', [user.id, selectedConversation])
         .order('created_at', { ascending: true });
 
-      return data || [];
+      // Filter to ensure we only get messages between these two users
+      return data?.filter(msg => msg.from_user_id !== msg.to_user_id) || [];
     },
     enabled: !!selectedConversation && !!user?.id
   });
