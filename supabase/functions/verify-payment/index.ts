@@ -47,12 +47,26 @@ serve(async (req) => {
     // Get order to verify ownership
     const { data: order, error: orderError } = await supabaseClient
       .from("orders")
-      .select("*, listings(title), buyer_profile:profiles!fk_orders_buyer(name), seller_profile:profiles!fk_orders_seller(name)")
+      .select("*")
       .eq("id", order_id)
       .single();
 
     if (orderError || !order) throw new Error("Order not found");
     if (order.buyer_id !== user.id) throw new Error("Unauthorized");
+
+    // Fetch related data separately
+    const [listingData, buyerData, sellerData] = await Promise.all([
+      supabaseClient.from("listings").select("title").eq("id", order.listing_id).single(),
+      supabaseClient.from("profiles").select("name").eq("id", order.buyer_id).single(),
+      supabaseClient.from("profiles").select("name").eq("id", order.seller_id).single()
+    ]);
+
+    const enrichedOrder = {
+      ...order,
+      listings: listingData.data,
+      buyer_profile: buyerData.data,
+      seller_profile: sellerData.data
+    };
 
     // Update order status to paid
     const { error: updateError } = await supabaseClient

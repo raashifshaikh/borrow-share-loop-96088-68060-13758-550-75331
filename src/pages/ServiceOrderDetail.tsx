@@ -123,8 +123,8 @@ const ServiceOrderDetail = () => {
     <DashboardLayout>
       <div className="space-y-6">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate('/orders')}>
-            <ArrowLeft className="h-4 w-4" />
+          <Button variant="ghost" size="icon" className="h-10 w-10" onClick={() => navigate('/orders')}>
+            <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
             <h1 className="text-3xl font-bold text-foreground">Service Request Details</h1>
@@ -143,8 +143,8 @@ const ServiceOrderDetail = () => {
                       {order.services?.category}
                     </p>
                   </div>
-                  <Badge variant={getStatusColor(order.status)}>
-                    {order.status}
+                  <Badge variant={getStatusColor(order.status)} className="text-sm px-3 py-1 font-semibold">
+                    {order.status.replace('_', ' ').toUpperCase()}
                   </Badge>
                 </div>
               </CardHeader>
@@ -183,25 +183,27 @@ const ServiceOrderDetail = () => {
                   <p className="text-muted-foreground mb-4">
                     Review this service request and decide whether to accept or decline it.
                   </p>
-                  <div className="flex flex-col sm:flex-row gap-3">
-                    <Button
-                      className="flex-1"
-                      onClick={() => updateStatusMutation.mutate('accepted')}
-                      disabled={updateStatusMutation.isPending}
-                    >
-                      <CheckCircle className="h-4 w-4 mr-2" />
-                      Accept Request
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      className="flex-1"
-                      onClick={() => updateStatusMutation.mutate('cancelled')}
-                      disabled={updateStatusMutation.isPending}
-                    >
-                      <XCircle className="h-4 w-4 mr-2" />
-                      Decline Request
-                    </Button>
-                  </div>
+              <div className="flex flex-col gap-3">
+                <Button
+                  className="w-full min-h-[48px]"
+                  size="lg"
+                  onClick={() => updateStatusMutation.mutate('accepted')}
+                  disabled={updateStatusMutation.isPending}
+                >
+                  <CheckCircle className="h-5 w-5 mr-2" />
+                  Accept Request
+                </Button>
+                <Button
+                  variant="destructive"
+                  className="w-full min-h-[48px]"
+                  size="lg"
+                  onClick={() => updateStatusMutation.mutate('cancelled')}
+                  disabled={updateStatusMutation.isPending}
+                >
+                  <XCircle className="h-5 w-5 mr-2" />
+                  Decline Request
+                </Button>
+              </div>
                 </CardContent>
               </Card>
             )}
@@ -232,8 +234,8 @@ const ServiceOrderDetail = () => {
                   to={`/messages?user=${isProvider ? order.buyer_id : order.provider_id}&serviceOrder=${order.id}`}
                   className="block"
                 >
-                  <Button variant="outline" className="w-full">
-                    <MessageCircle className="h-4 w-4 mr-2" />
+                  <Button variant="outline" className="w-full min-h-[44px]">
+                    <MessageCircle className="h-5 w-5 mr-2" />
                     Send Message
                   </Button>
                 </Link>

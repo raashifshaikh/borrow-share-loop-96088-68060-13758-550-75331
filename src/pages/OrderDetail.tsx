@@ -293,8 +293,9 @@ const OrderDetail = () => {
               order.status === 'completed' ? 'secondary' :
               order.status === 'cancelled' ? 'destructive' : 'outline'
             }
+            className="text-sm px-3 py-1 font-semibold"
           >
-            {order.status}
+            {order.status.replace('_', ' ').toUpperCase()}
           </Badge>
         </div>
 
@@ -358,28 +359,28 @@ const OrderDetail = () => {
             <CardContent className="space-y-4">
               <div>
                 <p className="text-sm font-medium mb-2">Buyer</p>
-                <div className="flex items-center gap-2">
-                  <Package className="h-4 w-4 text-muted-foreground" />
-                  <span className="truncate">{(order as any).buyer_profile?.name || 'N/A'}</span>
-                </div>
+                 <div className="flex items-center gap-2">
+                   <Package className="h-5 w-5 text-muted-foreground" />
+                   <span className="truncate">{(order as any).buyer_profile?.name || 'N/A'}</span>
+                 </div>
               </div>
 
               <Separator />
 
               <div>
                 <p className="text-sm font-medium mb-2">Seller</p>
-                <div className="flex items-center gap-2">
-                  <Package className="h-4 w-4 text-muted-foreground" />
-                  <span className="truncate">{(order as any).seller_profile?.name || 'N/A'}</span>
-                </div>
+                 <div className="flex items-center gap-2">
+                   <Package className="h-5 w-5 text-muted-foreground" />
+                   <span className="truncate">{(order as any).seller_profile?.name || 'N/A'}</span>
+                 </div>
               </div>
 
               {canChat && (
                 <>
                   <Separator />
                   <Link to={`/messages?order=${id}`} className="block w-full">
-                    <Button className="w-full" variant="outline">
-                      <MessageSquare className="h-4 w-4 mr-2" />
+                    <Button className="w-full min-h-[44px]" size="default" variant="outline">
+                      <MessageSquare className="h-5 w-5 mr-2" />
                       Open Chat
                     </Button>
                   </Link>
@@ -458,22 +459,24 @@ const OrderDetail = () => {
               <p className="text-sm text-muted-foreground">
                 Review this order and decide whether to accept or decline it.
               </p>
-              <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex flex-col gap-3">
                 <Button
-                  className="flex-1"
+                  className="w-full min-h-[48px]"
+                  size="lg"
                   onClick={handleAcceptOrder}
                   disabled={updateOrderMutation.isPending}
                 >
-                  <Check className="h-4 w-4 mr-2" />
+                  <Check className="h-5 w-5 mr-2" />
                   Accept Order
                 </Button>
                 <Button
-                  className="flex-1"
+                  className="w-full min-h-[48px]"
+                  size="lg"
                   variant="destructive"
                   onClick={handleDeclineOrder}
                   disabled={updateOrderMutation.isPending}
                 >
-                  <X className="h-4 w-4 mr-2" />
+                  <X className="h-5 w-5 mr-2" />
                   Decline Order
                 </Button>
               </div>
@@ -494,8 +497,8 @@ const OrderDetail = () => {
               <p className="text-sm text-muted-foreground">
                 The seller has accepted your order. Complete payment to proceed with delivery.
               </p>
-              <Button className="w-full" size="lg" onClick={initiatePayment}>
-                <CreditCard className="h-5 w-5 mr-2" />
+              <Button className="w-full min-h-[52px]" size="lg" onClick={initiatePayment}>
+                <CreditCard className="h-6 w-6 mr-2" />
                 Proceed to Payment
               </Button>
             </CardContent>
@@ -576,8 +579,8 @@ const OrderDetail = () => {
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground mb-4">Generate a QR code for item delivery tracking</p>
-              <Button onClick={generateQRCode} className="w-full">
-                <QrCode className="h-5 w-5 mr-2" />
+              <Button onClick={generateQRCode} className="w-full min-h-[48px]" size="lg">
+                <QrCode className="h-6 w-6 mr-2" />
                 Generate QR Code
               </Button>
             </CardContent>
@@ -591,8 +594,8 @@ const OrderDetail = () => {
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground mb-4">Show this QR code to the buyer when delivering the item</p>
-              <Button onClick={() => setShowQRDialog(true)} className="w-full">
-                <QrCode className="h-5 w-5 mr-2" />
+              <Button onClick={() => setShowQRDialog(true)} className="w-full min-h-[48px]" size="lg">
+                <QrCode className="h-6 w-6 mr-2" />
                 Show QR Code
               </Button>
             </CardContent>
@@ -606,8 +609,8 @@ const OrderDetail = () => {
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground mb-4">Scan the seller's QR code to confirm you received the item</p>
-              <Button onClick={() => { setScanType('delivery'); setShowScanDialog(true); }} className="w-full">
-                <Scan className="h-5 w-5 mr-2" />
+              <Button onClick={() => { setScanType('delivery'); setShowScanDialog(true); }} className="w-full min-h-[48px]" size="lg">
+                <Scan className="h-6 w-6 mr-2" />
                 Scan QR Code
               </Button>
             </CardContent>
@@ -621,8 +624,8 @@ const OrderDetail = () => {
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground mb-4">Show this QR code to the seller when returning the item</p>
-              <Button onClick={() => setShowQRDialog(true)} className="w-full">
-                <QrCode className="h-5 w-5 mr-2" />
+              <Button onClick={() => setShowQRDialog(true)} className="w-full min-h-[48px]" size="lg">
+                <QrCode className="h-6 w-6 mr-2" />
                 Show QR Code
               </Button>
             </CardContent>
@@ -636,8 +639,8 @@ const OrderDetail = () => {
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground mb-4">Scan the buyer's QR code to confirm the item has been returned</p>
-              <Button onClick={() => { setScanType('return'); setShowScanDialog(true); }} className="w-full">
-                <Scan className="h-5 w-5 mr-2" />
+              <Button onClick={() => { setScanType('return'); setShowScanDialog(true); }} className="w-full min-h-[48px]" size="lg">
+                <Scan className="h-6 w-6 mr-2" />
                 Scan QR Code
               </Button>
             </CardContent>

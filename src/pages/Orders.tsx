@@ -349,8 +349,8 @@ const Orders = () => {
               {type === 'borrowed' ? 'From' : 'To'}: {type === 'borrowed' ? order.seller_profile?.name : order.buyer_profile?.name}
             </p>
           </div>
-          <Badge variant={getStatusColor(order.status)} className="shrink-0">
-            {order.status}
+          <Badge variant={getStatusColor(order.status)} className="shrink-0 text-sm px-3 py-1 font-semibold">
+            {order.status.replace('_', ' ').toUpperCase()}
           </Badge>
         </div>
       </CardHeader>
@@ -371,9 +371,9 @@ const Orders = () => {
           </div>
         </div>
         
-        <div className="flex flex-col sm:flex-row gap-2 mt-4">
+        <div className="flex flex-col sm:flex-row gap-3 mt-4">
           <Link to={`/orders/${order.id}`} className="flex-1">
-            <Button variant="outline" size="sm" className="w-full">
+            <Button variant="outline" size="default" className="w-full min-h-[44px]">
               View Details
             </Button>
           </Link>
@@ -382,23 +382,23 @@ const Orders = () => {
             <>
               <Button
                 variant="default"
-                size="sm"
-                className="flex-1"
+                size="default"
+                className="flex-1 min-h-[44px]"
                 onClick={() => updateOrderMutation.mutate({ orderId: order.id, status: 'accepted' })}
                 disabled={updateOrderMutation.isPending}
               >
-                <CheckCircle className="h-4 w-4 sm:mr-1" />
-                <span className="hidden sm:inline">Accept</span>
+                <CheckCircle className="h-5 w-5 mr-2" />
+                Accept
               </Button>
               <Button
                 variant="destructive"
-                size="sm"
-                className="flex-1"
+                size="default"
+                className="flex-1 min-h-[44px]"
                 onClick={() => updateOrderMutation.mutate({ orderId: order.id, status: 'cancelled' })}
                 disabled={updateOrderMutation.isPending}
               >
-                <XCircle className="h-4 w-4 sm:mr-1" />
-                <span className="hidden sm:inline">Decline</span>
+                <XCircle className="h-5 w-5 mr-2" />
+                Decline
               </Button>
             </>
           )}
@@ -419,8 +419,8 @@ const Orders = () => {
               {type === 'booked' ? 'Provider' : 'Client'}: {type === 'booked' ? order.provider_profile?.name : order.buyer_profile?.name}
             </p>
           </div>
-          <Badge variant={getStatusColor(order.status)} className="shrink-0">
-            {order.status}
+          <Badge variant={getStatusColor(order.status)} className="shrink-0 text-sm px-3 py-1 font-semibold">
+            {order.status.replace('_', ' ').toUpperCase()}
           </Badge>
         </div>
       </CardHeader>
@@ -437,9 +437,9 @@ const Orders = () => {
           </div>
         </div>
         
-        <div className="flex flex-col sm:flex-row gap-2 mt-4">
+        <div className="flex flex-col sm:flex-row gap-3 mt-4">
           <Link to={`/service-orders/${order.id}`} className="flex-1">
-            <Button variant="outline" size="sm" className="w-full">
+            <Button variant="outline" size="default" className="w-full min-h-[44px]">
               View Details
             </Button>
           </Link>
@@ -448,23 +448,23 @@ const Orders = () => {
             <>
               <Button
                 variant="default"
-                size="sm"
-                className="flex-1"
+                size="default"
+                className="flex-1 min-h-[44px]"
                 onClick={() => updateServiceOrderMutation.mutate({ orderId: order.id, status: 'accepted' })}
                 disabled={updateServiceOrderMutation.isPending}
               >
-                <CheckCircle className="h-4 w-4 sm:mr-1" />
-                <span className="hidden sm:inline">Accept</span>
+                <CheckCircle className="h-5 w-5 mr-2" />
+                Accept
               </Button>
               <Button
                 variant="destructive"
-                size="sm"
-                className="flex-1"
+                size="default"
+                className="flex-1 min-h-[44px]"
                 onClick={() => updateServiceOrderMutation.mutate({ orderId: order.id, status: 'cancelled' })}
                 disabled={updateServiceOrderMutation.isPending}
               >
-                <XCircle className="h-4 w-4 sm:mr-1" />
-                <span className="hidden sm:inline">Decline</span>
+                <XCircle className="h-5 w-5 mr-2" />
+                Decline
               </Button>
             </>
           )}
@@ -483,20 +483,17 @@ const Orders = () => {
 
         <Tabs defaultValue="borrowed" className="w-full">
           <TabsList className="grid w-full grid-cols-2 md:grid-cols-4">
-            <TabsTrigger value="borrowed" className="text-xs sm:text-sm px-2">
-              <ShoppingBag className="h-4 w-4 mr-1" />
-              <span className="hidden sm:inline">Borrowed</span>
-              <span className="sm:hidden">Rent</span> ({borrowedOrders?.length || 0})
+            <TabsTrigger value="borrowed" className="text-sm md:text-base px-3 py-2.5">
+              <ShoppingBag className="h-5 w-5 mr-2" />
+              <span>Borrowed</span> ({borrowedOrders?.length || 0})
             </TabsTrigger>
-            <TabsTrigger value="lent" className="text-xs sm:text-sm px-2">
-              <Package className="h-4 w-4 mr-1" />
-              <span className="hidden sm:inline">Lent</span>
-              <span className="sm:hidden">Lend</span> ({lentOrders?.length || 0})
+            <TabsTrigger value="lent" className="text-sm md:text-base px-3 py-2.5">
+              <Package className="h-5 w-5 mr-2" />
+              <span>Lent</span> ({lentOrders?.length || 0})
             </TabsTrigger>
-            <TabsTrigger value="services-booked" className="text-xs sm:text-sm px-2">
-              <ShoppingBag className="h-4 w-4 mr-1" />
-              <span className="hidden sm:inline">Services</span>
-              <span className="sm:hidden">Svc</span> ({serviceOrdersBooked?.length || 0})
+            <TabsTrigger value="services-booked" className="text-sm md:text-base px-3 py-2.5">
+              <ShoppingBag className="h-5 w-5 mr-2" />
+              <span>Services</span> ({serviceOrdersBooked?.length || 0})
             </TabsTrigger>
             <TabsTrigger value="services-provided" className="text-xs sm:text-sm px-2">
               <Package className="h-4 w-4 mr-1" />
