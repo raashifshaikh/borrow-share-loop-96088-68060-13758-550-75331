@@ -27,7 +27,7 @@ const Messages = () => {
   const sellerId = searchParams.get('seller');
   const listingId = searchParams.get('listing');
   // Use a composite key for unique chat per seller+listing
-  const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
+  const [selectedConversation, setSelectedConversation] = useState<{ sellerId: string, listingId: string } | null>(null);
   const [newMessage, setNewMessage] = useState('');
   const [showNegotiationDialog, setShowNegotiationDialog] = useState(false);
   const [negotiationAmount, setNegotiationAmount] = useState('');
@@ -73,7 +73,7 @@ const Messages = () => {
 
   // Get messages for selected conversation (by seller+listing)
   const { data: messages } = useQuery({
-    queryKey: ['messages', selectedConversation, listingId, user?.id],
+    queryKey: ['messages', selectedConversation?.sellerId, selectedConversation?.listingId, user?.id],
     queryFn: async () => {
       if (!selectedConversation || !user?.id) return [];
 
@@ -82,14 +82,14 @@ const Messages = () => {
         .from('chat_messages')
         .select('*')
         .or(
-          `and(from_user_id.eq.${user.id},to_user_id.eq.${selectedConversation}),and(from_user_id.eq.${selectedConversation},to_user_id.eq.${user.id})`
+          `and(from_user_id.eq.${user.id},to_user_id.eq.${selectedConversation.sellerId}),and(from_user_id.eq.${selectedConversation.sellerId},to_user_id.eq.${user.id})`
         )
-        .eq('listing_id', listingId)
+        .eq('listing_id', selectedConversation.listingId)
         .order('created_at', { ascending: true });
 
       return data || [];
     },
-    enabled: !!selectedConversation && !!user?.id && !!listingId
+    enabled: !!selectedConversation && !!user?.id && !!selectedConversation.listingId
   });
 
   // Get order context if linked
@@ -183,14 +183,14 @@ const Messages = () => {
     if (sellerId && listingId && user) {
       // Don't allow chatting with yourself
       if (sellerId !== user.id) {
-        setSelectedConversation(sellerId);
+        setSelectedConversation({ sellerId, listingId });
       }
     } else if (orderContext && user) {
       // fallback: order context
       const otherUserId = orderContext.seller_id === user.id 
         ? orderContext.buyer_id 
         : orderContext.seller_id;
-      setSelectedConversation(otherUserId);
+      setSelectedConversation({ sellerId: otherUserId, listingId: orderContext.listing_id });
     }
   }, [sellerId, listingId, user, orderContext]);
 
@@ -243,37 +243,40 @@ const Messages = () => {
                 </div>
               ) : (
                 <div className="space-y-1 p-2">
-                  {conversations?.map((conversation) => (
-                    <button
-                      key={conversation.otherUserId}
-                      onClick={() => setSelectedConversation(conversation.otherUserId)}
-                      className={`w-full p-3 rounded-lg text-left transition-colors ${
-                        selectedConversation === conversation.otherUserId
-                          ? 'bg-accent'
-                          : 'hover:bg-accent/50'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <Avatar>
-                          <AvatarImage src={conversation.otherUser?.avatar_url || ''} />
-                          <AvatarFallback>
-                            {conversation.otherUser?.name?.[0] || 'U'}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium truncate">
-                            {conversation.otherUser?.name || 'Unknown User'}
-                          </p>
-                          <p className="text-sm text-muted-foreground truncate">
-                            {conversation.message_text}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {formatDistanceToNow(new Date(conversation.created_at))} ago
-                          </p>
+                  {conversations?.map((conversation) => {
+                    const isActive =
+                      selectedConversation?.sellerId === conversation.otherUserId &&
+                      selectedConversation?.listingId === conversation.listingId;
+                    return (
+                      <button
+                        key={`${conversation.otherUserId}_${conversation.listingId}`}
+                        onClick={() => setSelectedConversation({ sellerId: conversation.otherUserId, listingId: conversation.listingId })}
+                        className={`w-full p-3 rounded-lg text-left transition-colors ${
+                          isActive ? 'bg-accent' : 'hover:bg-accent/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <Avatar>
+                            <AvatarImage src={conversation.otherUser?.avatar_url || ''} />
+                            <AvatarFallback>
+                              {conversation.otherUser?.name?.[0] || 'U'}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium truncate">
+                              {conversation.otherUser?.name || 'Unknown User'}
+                            </p>
+                            <p className="text-sm text-muted-foreground truncate">
+                              {conversation.message_text}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {formatDistanceToNow(new Date(conversation.created_at))} ago
+                            </p>
+                          </div>
                         </div>
-                      </div>
-                    </button>
-                  ))}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </ScrollArea>
