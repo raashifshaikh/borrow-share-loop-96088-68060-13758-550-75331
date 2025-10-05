@@ -16,6 +16,7 @@ import Profile from "./pages/Profile";
 import ListingDetail from "./pages/ListingDetail";
 import EditListing from "./pages/EditListing";
 import OrderDetail from "./pages/OrderDetail";
+import ServiceOrderDetail from "./pages/ServiceOrderDetail";
 import Gamification from "./pages/Gamification";
 import Settings from "./pages/Settings";
 import Favorites from "./pages/Favorites";
@@ -42,6 +43,7 @@ const App = () => (
             <Route path="/my-listings" element={<MyListings />} />
             <Route path="/orders" element={<Orders />} />
             <Route path="/orders/:id" element={<OrderDetail />} />
+            <Route path="/service-orders/:id" element={<ServiceOrderDetail />} />
             <Route path="/messages" element={<Messages />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/profile/:id" element={<Profile />} />

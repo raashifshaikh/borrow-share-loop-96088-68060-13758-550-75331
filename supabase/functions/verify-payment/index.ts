@@ -14,7 +14,12 @@ serve(async (req) => {
 
   const supabaseClient = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
-    Deno.env.get("SUPABASE_ANON_KEY") ?? ""
+    Deno.env.get("SUPABASE_ANON_KEY") ?? "",
+    {
+      global: {
+        headers: { Authorization: req.headers.get("Authorization")! }
+      }
+    }
   );
 
   try {
@@ -42,7 +47,7 @@ serve(async (req) => {
     // Get order to verify ownership
     const { data: order, error: orderError } = await supabaseClient
       .from("orders")
-      .select("*")
+      .select("*, listings(title), buyer_profile:profiles!fk_orders_buyer(name), seller_profile:profiles!fk_orders_seller(name)")
       .eq("id", order_id)
       .single();
 
@@ -59,6 +64,10 @@ serve(async (req) => {
       .eq("id", order_id);
 
     if (updateError) throw updateError;
+
+    // Award XP for successful transaction
+    await supabaseClient.rpc('award_xp', { p_user_id: order.buyer_id, p_xp: 50 });
+    await supabaseClient.rpc('award_xp', { p_user_id: order.seller_id, p_xp: 50 });
 
     console.log(`Payment verified for order ${order_id}, session ${session_id}`);
 

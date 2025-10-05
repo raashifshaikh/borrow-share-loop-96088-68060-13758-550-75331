@@ -9,15 +9,15 @@ export const Header = () => {
   const { signOut, user } = useAuth();
 
   return (
-    <header className="border-b border-border bg-card px-6 py-3 flex items-center justify-between">
+    <header className="border-b border-border bg-card px-3 sm:px-6 py-3 flex items-center justify-between">
       <SidebarTrigger />
       
       <div className="flex items-center gap-2">
         <NotificationBell />
         <Link to="/profile">
-          <Button variant="ghost" size="sm">
-            <User className="h-4 w-4 mr-2" />
-            {user?.email}
+          <Button variant="ghost" size="sm" className="gap-2">
+            <User className="h-4 w-4" />
+            <span className="hidden sm:inline">{user?.email}</span>
           </Button>
         </Link>
         <Button variant="ghost" size="sm" onClick={signOut}>

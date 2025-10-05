@@ -1,19 +1,25 @@
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useQuery } from '@tanstack/react-query';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { formatDistanceToNow } from 'date-fns';
-import { ShoppingBag, Package } from 'lucide-react';
+import { ShoppingBag, Package, AlertCircle, CheckCircle, XCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { useEffect } from 'react';
+import { useToast } from '@/hooks/use-toast';
 
 const Orders = () => {
   const { user } = useAuth();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
 
-  const { data: borrowedOrders } = useQuery({
+  const { data: borrowedOrders, isLoading: loadingBorrowed, error: errorBorrowed } = useQuery({
     queryKey: ['borrowed-orders', user?.id],
     queryFn: async () => {
       if (!user?.id) return [];
@@ -34,7 +40,7 @@ const Orders = () => {
     enabled: !!user?.id
   });
 
-  const { data: lentOrders } = useQuery({
+  const { data: lentOrders, isLoading: loadingLent, error: errorLent } = useQuery({
     queryKey: ['lent-orders', user?.id],
     queryFn: async () => {
       if (!user?.id) return [];
@@ -55,8 +61,7 @@ const Orders = () => {
     enabled: !!user?.id
   });
 
-  // Service orders queries
-  const { data: serviceOrdersBooked } = useQuery({
+  const { data: serviceOrdersBooked, isLoading: loadingServicesBooked, error: errorServicesBooked } = useQuery({
     queryKey: ['service-orders-booked', user?.id],
     queryFn: async () => {
       if (!user?.id) return [];
@@ -77,7 +82,7 @@ const Orders = () => {
     enabled: !!user?.id
   });
 
-  const { data: serviceOrdersProvided } = useQuery({
+  const { data: serviceOrdersProvided, isLoading: loadingServicesProvided, error: errorServicesProvided } = useQuery({
     queryKey: ['service-orders-provided', user?.id],
     queryFn: async () => {
       if (!user?.id) return [];
@@ -98,29 +103,157 @@ const Orders = () => {
     enabled: !!user?.id
   });
 
+  // Realtime subscriptions
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const ordersChannel = supabase
+      .channel('orders-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'orders',
+          filter: `buyer_id=eq.${user.id},seller_id=eq.${user.id}`
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['borrowed-orders'] });
+          queryClient.invalidateQueries({ queryKey: ['lent-orders'] });
+        }
+      )
+      .subscribe();
+
+    const serviceOrdersChannel = supabase
+      .channel('service-orders-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'service_orders',
+          filter: `buyer_id=eq.${user.id},provider_id=eq.${user.id}`
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['service-orders-booked'] });
+          queryClient.invalidateQueries({ queryKey: ['service-orders-provided'] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(ordersChannel);
+      supabase.removeChannel(serviceOrdersChannel);
+    };
+  }, [user?.id, queryClient]);
+
+  // Mutations for accept/decline
+  const updateOrderMutation = useMutation({
+    mutationFn: async ({ orderId, status }: { orderId: string; status: 'accepted' | 'cancelled' }) => {
+      const { error } = await supabase
+        .from('orders')
+        .update({ status })
+        .eq('id', orderId);
+      if (error) throw error;
+    },
+    onSuccess: (_, variables) => {
+      toast({
+        title: variables.status === 'accepted' ? 'Order Accepted' : 'Order Cancelled',
+        description: variables.status === 'accepted' 
+          ? 'The buyer can now proceed with payment' 
+          : 'The order has been cancelled'
+      });
+      queryClient.invalidateQueries({ queryKey: ['lent-orders'] });
+    },
+    onError: (error) => {
+      toast({
+        title: 'Error',
+        description: 'Failed to update order status',
+        variant: 'destructive'
+      });
+      console.error('Error updating order:', error);
+    }
+  });
+
+  const updateServiceOrderMutation = useMutation({
+    mutationFn: async ({ orderId, status }: { orderId: string; status: string }) => {
+      const { error } = await supabase
+        .from('service_orders')
+        .update({ status })
+        .eq('id', orderId);
+      if (error) throw error;
+    },
+    onSuccess: (_, variables) => {
+      toast({
+        title: variables.status === 'accepted' ? 'Request Accepted' : 'Request Declined',
+        description: variables.status === 'accepted' 
+          ? 'The client can now proceed with payment' 
+          : 'The request has been declined'
+      });
+      queryClient.invalidateQueries({ queryKey: ['service-orders-provided'] });
+    },
+    onError: (error) => {
+      toast({
+        title: 'Error',
+        description: 'Failed to update request status',
+        variant: 'destructive'
+      });
+      console.error('Error updating service order:', error);
+    }
+  });
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'pending': return 'default';
       case 'accepted': return 'secondary';
+      case 'paid': return 'default';
+      case 'in_progress': return 'default';
       case 'completed': return 'outline';
       case 'cancelled': return 'destructive';
       default: return 'default';
     }
   };
 
+  const LoadingSkeleton = () => (
+    <div className="grid gap-4 md:grid-cols-2">
+      {[1, 2, 3, 4].map((i) => (
+        <Card key={i}>
+          <CardHeader>
+            <Skeleton className="h-6 w-3/4 mb-2" />
+            <Skeleton className="h-4 w-1/2" />
+          </CardHeader>
+          <CardContent>
+            <Skeleton className="h-4 w-full mb-2" />
+            <Skeleton className="h-4 w-full mb-2" />
+            <Skeleton className="h-10 w-full mt-4" />
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+
+  const ErrorAlert = ({ error }: { error: any }) => (
+    <Alert variant="destructive">
+      <AlertCircle className="h-4 w-4" />
+      <AlertDescription>
+        Failed to load orders. Please try again later.
+      </AlertDescription>
+    </Alert>
+  );
+
   const OrderCard = ({ order, type }: { order: any, type: 'borrowed' | 'lent' }) => (
     <Card>
       <CardHeader className="pb-2">
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <h3 className="font-semibold text-foreground">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-foreground truncate">
               {order.listings?.title}
             </h3>
-            <p className="text-sm text-muted-foreground">
-              {type === 'borrowed' ? 'Borrowed from' : 'Lent to'}: {type === 'borrowed' ? order.seller_profile?.name : order.buyer_profile?.name}
+            <p className="text-sm text-muted-foreground truncate">
+              {type === 'borrowed' ? 'From' : 'To'}: {type === 'borrowed' ? order.seller_profile?.name : order.buyer_profile?.name}
             </p>
           </div>
-          <Badge variant={getStatusColor(order.status)}>
+          <Badge variant={getStatusColor(order.status)} className="shrink-0">
             {order.status}
           </Badge>
         </div>
@@ -140,26 +273,104 @@ const Orders = () => {
             <span className="text-muted-foreground">Ordered:</span>
             <span>{formatDistanceToNow(new Date(order.created_at))} ago</span>
           </div>
-          {order.notes && (
-            <div className="mt-2">
-              <p className="text-xs text-muted-foreground">Notes:</p>
-              <p className="text-sm">{order.notes}</p>
-            </div>
-          )}
         </div>
         
-        <div className="flex gap-2 mt-4">
+        <div className="flex flex-col sm:flex-row gap-2 mt-4">
           <Link to={`/orders/${order.id}`} className="flex-1">
             <Button variant="outline" size="sm" className="w-full">
               View Details
             </Button>
           </Link>
-          {order.status === 'accepted' && (
-            <Link to={`/messages?order=${order.id}`} className="flex-1">
-              <Button variant="outline" size="sm" className="w-full">
-                Message
+          
+          {type === 'lent' && order.status === 'pending' && (
+            <>
+              <Button
+                variant="default"
+                size="sm"
+                className="flex-1"
+                onClick={() => updateOrderMutation.mutate({ orderId: order.id, status: 'accepted' })}
+                disabled={updateOrderMutation.isPending}
+              >
+                <CheckCircle className="h-4 w-4 sm:mr-1" />
+                <span className="hidden sm:inline">Accept</span>
               </Button>
-            </Link>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="flex-1"
+                onClick={() => updateOrderMutation.mutate({ orderId: order.id, status: 'cancelled' })}
+                disabled={updateOrderMutation.isPending}
+              >
+                <XCircle className="h-4 w-4 sm:mr-1" />
+                <span className="hidden sm:inline">Decline</span>
+              </Button>
+            </>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+
+  const ServiceOrderCard = ({ order, type }: { order: any, type: 'booked' | 'provided' }) => (
+    <Card>
+      <CardHeader className="pb-2">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-foreground truncate">
+              {order.services?.title}
+            </h3>
+            <p className="text-sm text-muted-foreground truncate">
+              {type === 'booked' ? 'Provider' : 'Client'}: {type === 'booked' ? order.provider_profile?.name : order.buyer_profile?.name}
+            </p>
+          </div>
+          <Badge variant={getStatusColor(order.status)} className="shrink-0">
+            {order.status}
+          </Badge>
+        </div>
+      </CardHeader>
+      
+      <CardContent>
+        <div className="space-y-2">
+          <div className="flex justify-between text-sm">
+            <span className="text-muted-foreground">Amount:</span>
+            <span className="font-medium">${order.final_amount}</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-muted-foreground">Booked:</span>
+            <span>{formatDistanceToNow(new Date(order.created_at))} ago</span>
+          </div>
+        </div>
+        
+        <div className="flex flex-col sm:flex-row gap-2 mt-4">
+          <Link to={`/service-orders/${order.id}`} className="flex-1">
+            <Button variant="outline" size="sm" className="w-full">
+              View Details
+            </Button>
+          </Link>
+          
+          {type === 'provided' && order.status === 'pending' && (
+            <>
+              <Button
+                variant="default"
+                size="sm"
+                className="flex-1"
+                onClick={() => updateServiceOrderMutation.mutate({ orderId: order.id, status: 'accepted' })}
+                disabled={updateServiceOrderMutation.isPending}
+              >
+                <CheckCircle className="h-4 w-4 sm:mr-1" />
+                <span className="hidden sm:inline">Accept</span>
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="flex-1"
+                onClick={() => updateServiceOrderMutation.mutate({ orderId: order.id, status: 'cancelled' })}
+                disabled={updateServiceOrderMutation.isPending}
+              >
+                <XCircle className="h-4 w-4 sm:mr-1" />
+                <span className="hidden sm:inline">Decline</span>
+              </Button>
+            </>
           )}
         </div>
       </CardContent>
@@ -175,25 +386,35 @@ const Orders = () => {
         </div>
 
         <Tabs defaultValue="borrowed" className="w-full">
-          <TabsList className="grid w-full grid-cols-4">
-            <TabsTrigger value="borrowed">
-              <ShoppingBag className="h-4 w-4 mr-2" />
-              Borrowed ({borrowedOrders?.length || 0})
+          <TabsList className="grid w-full grid-cols-2 md:grid-cols-4">
+            <TabsTrigger value="borrowed" className="text-xs sm:text-sm px-2">
+              <ShoppingBag className="h-4 w-4 mr-1" />
+              <span className="hidden sm:inline">Borrowed</span>
+              <span className="sm:hidden">Rent</span> ({borrowedOrders?.length || 0})
             </TabsTrigger>
-            <TabsTrigger value="lent">
-              <Package className="h-4 w-4 mr-2" />
-              Lent ({lentOrders?.length || 0})
+            <TabsTrigger value="lent" className="text-xs sm:text-sm px-2">
+              <Package className="h-4 w-4 mr-1" />
+              <span className="hidden sm:inline">Lent</span>
+              <span className="sm:hidden">Lend</span> ({lentOrders?.length || 0})
             </TabsTrigger>
-            <TabsTrigger value="services-booked">
-              Services Booked ({serviceOrdersBooked?.length || 0})
+            <TabsTrigger value="services-booked" className="text-xs sm:text-sm px-2">
+              <ShoppingBag className="h-4 w-4 mr-1" />
+              <span className="hidden sm:inline">Services</span>
+              <span className="sm:hidden">Svc</span> ({serviceOrdersBooked?.length || 0})
             </TabsTrigger>
-            <TabsTrigger value="services-provided">
-              Services Provided ({serviceOrdersProvided?.length || 0})
+            <TabsTrigger value="services-provided" className="text-xs sm:text-sm px-2">
+              <Package className="h-4 w-4 mr-1" />
+              <span className="hidden sm:inline">Provided</span>
+              <span className="sm:hidden">Prov</span> ({serviceOrdersProvided?.length || 0})
             </TabsTrigger>
           </TabsList>
           
           <TabsContent value="borrowed" className="space-y-4">
-            {borrowedOrders?.length === 0 ? (
+            {loadingBorrowed ? (
+              <LoadingSkeleton />
+            ) : errorBorrowed ? (
+              <ErrorAlert error={errorBorrowed} />
+            ) : borrowedOrders?.length === 0 ? (
               <Card className="text-center py-12">
                 <CardContent>
                   <ShoppingBag className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
@@ -216,7 +437,11 @@ const Orders = () => {
           </TabsContent>
           
           <TabsContent value="lent" className="space-y-4">
-            {lentOrders?.length === 0 ? (
+            {loadingLent ? (
+              <LoadingSkeleton />
+            ) : errorLent ? (
+              <ErrorAlert error={errorLent} />
+            ) : lentOrders?.length === 0 ? (
               <Card className="text-center py-12">
                 <CardContent>
                   <Package className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
@@ -239,7 +464,11 @@ const Orders = () => {
           </TabsContent>
 
           <TabsContent value="services-booked" className="space-y-4">
-            {serviceOrdersBooked?.length === 0 ? (
+            {loadingServicesBooked ? (
+              <LoadingSkeleton />
+            ) : errorServicesBooked ? (
+              <ErrorAlert error={errorServicesBooked} />
+            ) : serviceOrdersBooked?.length === 0 ? (
               <Card className="text-center py-12">
                 <CardContent>
                   <Package className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
@@ -255,45 +484,18 @@ const Orders = () => {
             ) : (
               <div className="grid gap-4 md:grid-cols-2">
                 {serviceOrdersBooked?.map((order: any) => (
-                  <Card key={order.id}>
-                    <CardHeader className="pb-2">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-foreground">
-                            {order.services?.title}
-                          </h3>
-                          <p className="text-sm text-muted-foreground">
-                            Provider: {order.provider_profile?.name}
-                          </p>
-                        </div>
-                        <Badge variant={order.status === 'accepted' ? 'default' : 'outline'}>
-                          {order.status}
-                        </Badge>
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-2">
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Amount:</span>
-                          <span className="font-medium">${order.final_amount}</span>
-                        </div>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Booked:</span>
-                          <span>{formatDistanceToNow(new Date(order.created_at))} ago</span>
-                        </div>
-                      </div>
-                      <Button variant="outline" size="sm" className="w-full mt-4">
-                        View Details
-                      </Button>
-                    </CardContent>
-                  </Card>
+                  <ServiceOrderCard key={order.id} order={order} type="booked" />
                 ))}
               </div>
             )}
           </TabsContent>
 
           <TabsContent value="services-provided" className="space-y-4">
-            {serviceOrdersProvided?.length === 0 ? (
+            {loadingServicesProvided ? (
+              <LoadingSkeleton />
+            ) : errorServicesProvided ? (
+              <ErrorAlert error={errorServicesProvided} />
+            ) : serviceOrdersProvided?.length === 0 ? (
               <Card className="text-center py-12">
                 <CardContent>
                   <Package className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
@@ -309,38 +511,7 @@ const Orders = () => {
             ) : (
               <div className="grid gap-4 md:grid-cols-2">
                 {serviceOrdersProvided?.map((order: any) => (
-                  <Card key={order.id}>
-                    <CardHeader className="pb-2">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-foreground">
-                            {order.services?.title}
-                          </h3>
-                          <p className="text-sm text-muted-foreground">
-                            Client: {order.buyer_profile?.name}
-                          </p>
-                        </div>
-                        <Badge variant={order.status === 'accepted' ? 'default' : 'outline'}>
-                          {order.status}
-                        </Badge>
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-2">
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Amount:</span>
-                          <span className="font-medium">${order.final_amount}</span>
-                        </div>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Received:</span>
-                          <span>{formatDistanceToNow(new Date(order.created_at))} ago</span>
-                        </div>
-                      </div>
-                      <Button variant="outline" size="sm" className="w-full mt-4">
-                        View Details
-                      </Button>
-                    </CardContent>
-                  </Card>
+                  <ServiceOrderCard key={order.id} order={order} type="provided" />
                 ))}
               </div>
             )}

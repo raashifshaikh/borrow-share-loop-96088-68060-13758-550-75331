@@ -164,9 +164,9 @@ const Messages = () => {
 
   return (
     <DashboardLayout>
-      <div className="h-[calc(100vh-200px)] flex gap-4">
+      <div className="flex flex-col lg:flex-row h-auto lg:h-[calc(100vh-200px)] gap-4">
         {/* Conversations List */}
-        <Card className="w-80 flex flex-col">
+        <Card className="w-full lg:w-80 flex flex-col max-h-[400px] lg:max-h-none">
           <CardHeader>
             <CardTitle>Conversations</CardTitle>
           </CardHeader>
