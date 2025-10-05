@@ -22,6 +22,7 @@ import Settings from "./pages/Settings";
 import Favorites from "./pages/Favorites";
 import Notifications from "./pages/Notifications";
 import NotFound from "./pages/NotFound";
+import TestFlow from "./pages/TestFlow";
 
 const queryClient = new QueryClient();
 
@@ -51,6 +52,7 @@ const App = () => (
             <Route path="/settings" element={<Settings />} />
             <Route path="/favorites" element={<Favorites />} />
             <Route path="/notifications" element={<Notifications />} />
+            <Route path="/test" element={<TestFlow />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

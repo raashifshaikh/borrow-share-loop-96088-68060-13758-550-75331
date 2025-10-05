@@ -32,29 +32,57 @@ const OrderDetail = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('orders')
-        .select(`
-          *,
-          listings(*, seller_profile:profiles!listings_seller_id_fkey(name, avatar_url)),
-          buyer_profile:profiles!orders_buyer_id_fkey(name, avatar_url),
-          seller_profile:profiles!orders_seller_id_fkey(name, avatar_url)
-        `)
+        .select('*')
         .eq('id', id)
         .single();
 
       if (error) throw error;
-      return data;
-    }
+      
+      // Fetch related data separately
+      const [listingData, buyerData, sellerData] = await Promise.all([
+        supabase.from('listings').select('*, seller_profile:profiles(name, avatar_url)').eq('id', data.listing_id).single(),
+        supabase.from('profiles').select('name, avatar_url').eq('id', data.buyer_id).single(),
+        supabase.from('profiles').select('name, avatar_url').eq('id', data.seller_id).single()
+      ]);
+
+      return {
+        ...data,
+        listings: listingData.data,
+        buyer_profile: buyerData.data,
+        seller_profile: sellerData.data
+      };
+    },
+    enabled: !!id
   });
 
   const { data: negotiations } = useQuery({
     queryKey: ['negotiations', id],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('order_negotiations')
-        .select('*, from_profile:profiles!order_negotiations_from_user_id_fkey(name)')
+        .select('*')
         .eq('order_id', id)
         .order('created_at', { ascending: true });
-      return data || [];
+      
+      if (error) throw error;
+      
+      // Fetch profile data separately
+      const negotiationsWithProfiles = await Promise.all(
+        (data || []).map(async (neg) => {
+          const { data: profileData } = await supabase
+            .from('profiles')
+            .select('name')
+            .eq('id', neg.from_user_id)
+            .single();
+          
+          return {
+            ...neg,
+            from_profile: profileData
+          };
+        })
+      );
+      
+      return negotiationsWithProfiles;
     },
     enabled: !!id
   });

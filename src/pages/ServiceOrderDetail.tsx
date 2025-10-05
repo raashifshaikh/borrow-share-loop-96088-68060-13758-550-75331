@@ -24,36 +24,25 @@ const ServiceOrderDetail = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('service_orders')
-        .select(`
-          *,
-          services (
-            id,
-            title,
-            description,
-            category,
-            price,
-            duration_hours,
-            images,
-            provider_id
-          ),
-          buyer_profile:profiles!service_orders_buyer_id_fkey (
-            id,
-            name,
-            avatar_url,
-            email
-          ),
-          provider_profile:profiles!service_orders_provider_id_fkey (
-            id,
-            name,
-            avatar_url,
-            email
-          )
-        `)
+        .select('*')
         .eq('id', id)
         .single();
 
       if (error) throw error;
-      return data;
+      
+      // Fetch related data separately
+      const [serviceData, buyerData, providerData] = await Promise.all([
+        supabase.from('services').select('id, title, description, category, price, duration_hours, images, provider_id').eq('id', data.service_id).single(),
+        supabase.from('profiles').select('id, name, avatar_url, email').eq('id', data.buyer_id).single(),
+        supabase.from('profiles').select('id, name, avatar_url, email').eq('id', data.provider_id).single()
+      ]);
+
+      return {
+        ...data,
+        services: serviceData.data,
+        buyer_profile: buyerData.data,
+        provider_profile: providerData.data
+      };
     },
     enabled: !!id
   });

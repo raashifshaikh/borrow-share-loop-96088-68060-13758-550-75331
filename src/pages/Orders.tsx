@@ -26,16 +26,32 @@ const Orders = () => {
 
       const { data, error } = await supabase
         .from('orders')
-        .select(`
-          *,
-          listings (title, images, seller_id),
-          seller_profile:profiles!orders_seller_id_fkey (name)
-        `)
+        .select('*')
         .eq('buyer_id', user.id)
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      return data || [];
+      if (error) {
+        console.error('Error fetching borrowed orders:', error);
+        throw error;
+      }
+
+      // Fetch related data separately
+      const ordersWithData = await Promise.all(
+        (data || []).map(async (order) => {
+          const [listingData, sellerData] = await Promise.all([
+            supabase.from('listings').select('title, images').eq('id', order.listing_id).single(),
+            supabase.from('profiles').select('name').eq('id', order.seller_id).single()
+          ]);
+
+          return {
+            ...order,
+            listings: listingData.data,
+            seller_profile: sellerData.data
+          };
+        })
+      );
+
+      return ordersWithData;
     },
     enabled: !!user?.id
   });
@@ -47,16 +63,32 @@ const Orders = () => {
 
       const { data, error } = await supabase
         .from('orders')
-        .select(`
-          *,
-          listings (title, images),
-          buyer_profile:profiles!orders_buyer_id_fkey (name)
-        `)
+        .select('*')
         .eq('seller_id', user.id)
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      return data || [];
+      if (error) {
+        console.error('Error fetching lent orders:', error);
+        throw error;
+      }
+
+      // Fetch related data separately
+      const ordersWithData = await Promise.all(
+        (data || []).map(async (order) => {
+          const [listingData, buyerData] = await Promise.all([
+            supabase.from('listings').select('title, images').eq('id', order.listing_id).single(),
+            supabase.from('profiles').select('name').eq('id', order.buyer_id).single()
+          ]);
+
+          return {
+            ...order,
+            listings: listingData.data,
+            buyer_profile: buyerData.data
+          };
+        })
+      );
+
+      return ordersWithData;
     },
     enabled: !!user?.id
   });
@@ -68,16 +100,32 @@ const Orders = () => {
 
       const { data, error } = await supabase
         .from('service_orders')
-        .select(`
-          *,
-          services (title, category),
-          provider_profile:profiles!service_orders_provider_id_fkey (name)
-        `)
+        .select('*')
         .eq('buyer_id', user.id)
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      return data || [];
+      if (error) {
+        console.error('Error fetching service orders booked:', error);
+        throw error;
+      }
+
+      // Fetch related data separately
+      const ordersWithData = await Promise.all(
+        (data || []).map(async (order) => {
+          const [serviceData, providerData] = await Promise.all([
+            supabase.from('services').select('title, category').eq('id', order.service_id).single(),
+            supabase.from('profiles').select('name').eq('id', order.provider_id).single()
+          ]);
+
+          return {
+            ...order,
+            services: serviceData.data,
+            provider_profile: providerData.data
+          };
+        })
+      );
+
+      return ordersWithData;
     },
     enabled: !!user?.id
   });
@@ -89,16 +137,32 @@ const Orders = () => {
 
       const { data, error } = await supabase
         .from('service_orders')
-        .select(`
-          *,
-          services (title, category),
-          buyer_profile:profiles!service_orders_buyer_id_fkey (name)
-        `)
+        .select('*')
         .eq('provider_id', user.id)
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      return data || [];
+      if (error) {
+        console.error('Error fetching service orders provided:', error);
+        throw error;
+      }
+
+      // Fetch related data separately
+      const ordersWithData = await Promise.all(
+        (data || []).map(async (order) => {
+          const [serviceData, buyerData] = await Promise.all([
+            supabase.from('services').select('title, category').eq('id', order.service_id).single(),
+            supabase.from('profiles').select('name').eq('id', order.buyer_id).single()
+          ]);
+
+          return {
+            ...order,
+            services: serviceData.data,
+            buyer_profile: buyerData.data
+          };
+        })
+      );
+
+      return ordersWithData;
     },
     enabled: !!user?.id
   });
