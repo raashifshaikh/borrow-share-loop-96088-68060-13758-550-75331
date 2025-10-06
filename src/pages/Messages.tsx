@@ -11,13 +11,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { formatDistanceToNow } from 'date-fns';
-import { Send, MessageSquare, DollarSign } from 'lucide-react';
+import { Send, MessageSquare, DollarSign, Check, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { RegularMessage } from '@/components/messages/RegularMessage';
-import { NegotiationMessage } from '@/components/messages/NegotiationMessage';
 import { Skeleton } from '@/components/ui/skeleton';
 
 const Messages = () => {
@@ -327,6 +325,117 @@ const Messages = () => {
     };
   }, [selectedOrderId, queryClient]);
 
+  // Render regular message
+  const renderRegularMessage = (msg: any, isFromMe: boolean, showAvatar: boolean) => {
+    return (
+      <div className={`flex gap-2 ${isFromMe ? 'justify-end' : 'justify-start'}`}>
+        {!isFromMe && showAvatar && (
+          <Avatar className="h-8 w-8">
+            <AvatarImage src={msg.from_user?.avatar_url || ''} />
+            <AvatarFallback>{msg.from_user?.name?.[0] || 'U'}</AvatarFallback>
+          </Avatar>
+        )}
+        
+        <div className={`max-w-[70%] ${isFromMe ? 'order-first' : ''}`}>
+          <div className={`rounded-lg px-3 py-2 ${
+            isFromMe 
+              ? 'bg-primary text-primary-foreground' 
+              : 'bg-muted'
+          }`}>
+            <p className="text-sm">{msg.message_text}</p>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1 px-1">
+            {formatDistanceToNow(new Date(msg.created_at), { addSuffix: true })}
+          </p>
+        </div>
+
+        {isFromMe && showAvatar && (
+          <Avatar className="h-8 w-8">
+            <AvatarImage src={msg.from_user?.avatar_url || ''} />
+            <AvatarFallback>{msg.from_user?.name?.[0] || 'U'}</AvatarFallback>
+          </Avatar>
+        )}
+      </div>
+    );
+  };
+
+  // Render negotiation message
+  const renderNegotiationMessage = (negotiation: any, isFromMe: boolean) => {
+    const isAccepted = negotiation.action === 'accept';
+    const isDeclined = negotiation.action === 'decline';
+    const isCounter = negotiation.action === 'counter';
+    const isNewOffer = !isAccepted && !isDeclined && !isCounter;
+
+    const getStatusColor = () => {
+      if (isAccepted) return 'bg-green-100 text-green-800 border-green-200';
+      if (isDeclined) return 'bg-red-100 text-red-800 border-red-200';
+      if (isCounter) return 'bg-blue-100 text-blue-800 border-blue-200';
+      return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+    };
+
+    const getStatusText = () => {
+      if (isAccepted) return 'Accepted';
+      if (isDeclined) return 'Declined';
+      if (isCounter) return 'Counter Offer';
+      return 'New Offer';
+    };
+
+    return (
+      <div className={`flex justify-center my-4`}>
+        <div className={`max-w-md w-full p-4 rounded-lg border ${getStatusColor()}`}>
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <DollarSign className="h-4 w-4" />
+              <span className="font-medium">Price Negotiation</span>
+            </div>
+            <Badge variant="secondary" className="text-xs">
+              {getStatusText()}
+            </Badge>
+          </div>
+          
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-2xl font-bold">${negotiation.amount?.toFixed(2)}</span>
+            {isNewOffer && !isFromMe && (
+              <div className="flex gap-2">
+                <Button 
+                  size="sm" 
+                  onClick={() => acceptNegotiation.mutate(negotiation.id)}
+                  className="h-8 px-2"
+                >
+                  <Check className="h-3 w-3 mr-1" />
+                  Accept
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  onClick={() => declineNegotiation.mutate(negotiation.id)}
+                  className="h-8 px-2"
+                >
+                  <X className="h-3 w-3 mr-1" />
+                  Decline
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {negotiation.message && (
+            <p className="text-sm mb-2">{negotiation.message}</p>
+          )}
+
+          <p className="text-xs text-muted-foreground">
+            {formatDistanceToNow(new Date(negotiation.created_at), { addSuffix: true })}
+          </p>
+
+          {isNewOffer && isFromMe && (
+            <p className="text-xs text-muted-foreground mt-2">
+              Waiting for response...
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const selectedConversation = conversations?.find(c => c.orderId === selectedOrderId);
 
   return (
@@ -452,34 +561,20 @@ const Messages = () => {
                     {messages?.map((msg, index) => {
                       const isFromMe = msg.from_user_id === user?.id;
                       const prevMsg = index > 0 ? messages[index - 1] : null;
-                      const showAvatar = !prevMsg || prevMsg.from_user_id !== msg.from_user_id;
+                      const showAvatar = !prevMsg || prevMsg.from_user_id !== msg.from_user_id || prevMsg.type !== msg.type;
 
                       if (msg.type === 'negotiation') {
                         return (
-                          <NegotiationMessage
-                            key={msg.id}
-                            negotiation={msg}
-                            currentUserId={user?.id || ''}
-                            onAccept={(id) => acceptNegotiation.mutate(id)}
-                            onDecline={(id) => declineNegotiation.mutate(id)}
-                            onCounter={() => {
-                              if ('amount' in msg && msg.amount) {
-                                setNegotiationAmount(msg.amount.toString());
-                              }
-                              setShowNegotiationDialog(true);
-                            }}
-                            canRespond={!isFromMe}
-                          />
+                          <div key={msg.id}>
+                            {renderNegotiationMessage(msg, isFromMe)}
+                          </div>
                         );
                       }
 
                       return (
-                        <RegularMessage
-                          key={msg.id}
-                          message={msg}
-                          isFromCurrentUser={isFromMe}
-                          showAvatar={showAvatar}
-                        />
+                        <div key={msg.id}>
+                          {renderRegularMessage(msg, isFromMe, showAvatar)}
+                        </div>
                       );
                     })}
                     <div ref={messagesEndRef} />
