@@ -1,3 +1,67 @@
+  // Query all listings the user is involved in (as buyer or seller)
+  const { data: possibleChats } = useQuery({
+    queryKey: ['possible-chats', user?.id],
+    queryFn: async () => {
+      if (!user?.id) return [];
+      // Get listings where user is seller
+      const { data: selling } = await supabase
+        .from('listings')
+        .select('id, title, seller_id, profiles(name, avatar_url)')
+        .eq('seller_id', user.id);
+
+      // Get orders where user is buyer
+      const { data: buying } = await supabase
+        .from('orders')
+        .select('id, listing_id, seller_id, buyer_id, listings(title, seller_id, profiles(name, avatar_url))')
+        .eq('buyer_id', user.id);
+
+      // Build possible chat objects
+      const chats = [];
+      // As seller: show all buyers for each listing (from orders)
+      if (selling) {
+        for (const listing of selling) {
+          // Find all buyers for this listing
+          const { data: buyers } = await supabase
+            .from('orders')
+            .select('buyer_id, profiles(name, avatar_url)')
+            .eq('listing_id', listing.id);
+          if (buyers) {
+            for (const buyer of buyers) {
+              if (buyer.buyer_id !== user.id) {
+                chats.push({
+                  otherUserId: buyer.buyer_id,
+                  listingId: listing.id,
+                  otherUser: buyer.profiles || { name: 'Unknown User', avatar_url: '' },
+                  listingTitle: listing.title
+                });
+              }
+            }
+          }
+        }
+      }
+      // As buyer: show all listings purchased from other sellers
+      if (buying) {
+        for (const order of buying) {
+          if (order.seller_id !== user.id) {
+            chats.push({
+              otherUserId: order.seller_id,
+              listingId: order.listing_id,
+              otherUser: order.listings?.profiles || { name: 'Unknown User', avatar_url: '' },
+              listingTitle: order.listings?.title || ''
+            });
+          }
+        }
+      }
+      // Remove duplicates (by otherUserId+listingId)
+      const unique = new Map();
+      for (const chat of chats) {
+        const key = `${chat.otherUserId}_${chat.listingId}`;
+        if (!unique.has(key)) unique.set(key, chat);
+      }
+      return Array.from(unique.values());
+    },
+    enabled: !!user?.id
+  });
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
@@ -63,14 +127,24 @@ const Messages = () => {
         const otherUserId = message.from_user_id === user.id 
           ? message.to_user_id 
           : message.from_user_id;
-        // Prefer profile info from join if available
+        // Skip if missing otherUserId or listingId
+        if (!otherUserId || !message.listing_id) return;
+        // Prefer profile info from join if available, fallback to default
         let otherUser = { name: 'Unknown User', avatar_url: '' };
-        if (message.from_user_id === user.id && message.to_profile) {
-          otherUser = message.to_profile;
-        } else if (message.from_user_id !== user.id && message.from_profile) {
-          otherUser = message.from_profile;
+        if (message.from_user_id === user.id && message.to_profile && message.to_profile.name) {
+          otherUser = {
+            name: message.to_profile.name || 'Unknown User',
+            avatar_url: message.to_profile.avatar_url || ''
+          };
+        } else if (message.from_user_id !== user.id && message.from_profile && message.from_profile.name) {
+          otherUser = {
+            name: message.from_profile.name || 'Unknown User',
+            avatar_url: message.from_profile.avatar_url || ''
+          };
         }
-        const key = `${otherUserId}_${message.listing_id || ''}`;
+        // Fallback for missing/empty name
+        if (!otherUser.name) otherUser.name = 'Unknown User';
+        const key = `${otherUserId}_${message.listing_id}`;
         if (!conversationMap.has(key) || 
             new Date(message.created_at) > new Date(conversationMap.get(key).created_at)) {
           conversationMap.set(key, {
@@ -124,31 +198,53 @@ const Messages = () => {
   });
 
   const sendMessage = async () => {
-    if (!newMessage.trim() || !selectedConversation || !user?.id || isSending) return;
+    if (!newMessage.trim()) {
+      toast({ title: 'Cannot send empty message', variant: 'destructive' });
+      return;
+    }
+    if (!selectedConversation || !user?.id) {
+      toast({ title: 'No conversation selected or user not found', variant: 'destructive' });
+      return;
+    }
+    if (!selectedConversation.sellerId || !selectedConversation.listingId) {
+      toast({ title: 'Missing chat recipient or listing', variant: 'destructive' });
+      return;
+    }
 
     const messageText = newMessage.trim();
     const tempId = `temp-${Date.now()}`;
-    
+
+    // Log payload for debugging
+    const payload = {
+      from_user_id: user.id,
+      to_user_id: selectedConversation.sellerId,
+      listing_id: selectedConversation.listingId,
+      message_text: messageText,
+      order_id: orderId || null
+    };
+    console.log('Sending message payload:', payload);
+
     // Optimistic update
     setNewMessage('');
     setIsSending(true);
 
     try {
-      const { error } = await supabase
+      const { error, data } = await supabase
         .from('chat_messages')
-        .insert([{
-          from_user_id: user.id,
-          to_user_id: selectedConversation.sellerId,
-          listing_id: selectedConversation.listingId,
-          message_text: messageText,
-          order_id: orderId || null
-        }]);
+        .insert([payload]);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase insert error:', error);
+        throw error;
+      }
+      if (!data) {
+        console.error('No data returned from insert');
+        throw new Error('No data returned from insert');
+      }
 
       queryClient.invalidateQueries({ queryKey: ['messages', selectedConversation.sellerId, selectedConversation.listingId, user?.id] });
       queryClient.invalidateQueries({ queryKey: ['conversations', user?.id] });
-      
+
       toast({ 
         title: 'Message sent',
         description: 'Your message was delivered successfully' 
@@ -156,7 +252,7 @@ const Messages = () => {
     } catch (error: any) {
       console.error('Failed to send message:', error);
       setNewMessage(messageText); // Restore message on error
-      
+
       toast({
         title: 'Failed to send message',
         description: error.message || 'Please check your connection and try again',
@@ -254,14 +350,51 @@ const Messages = () => {
           </CardHeader>
           <CardContent className="flex-1 p-0">
             <ScrollArea className="h-full">
-              {conversations?.length === 0 ? (
+              {/* Show all possible chats, even if no messages exist yet */}
+              {((possibleChats?.length ?? 0) === 0 && (conversations?.length ?? 0) === 0) ? (
                 <div className="p-6 text-center">
                   <MessageSquare className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                   <p className="text-muted-foreground">No conversations yet</p>
                 </div>
               ) : (
                 <div className="space-y-1 p-2">
-                  {conversations?.map((conversation) => {
+                  {/* Show all possible chats first */}
+                  {possibleChats?.map((chat) => {
+                    const isActive =
+                      selectedConversation?.sellerId === chat.otherUserId &&
+                      selectedConversation?.listingId === chat.listingId;
+                    return (
+                      <button
+                        key={`possible_${chat.otherUserId}_${chat.listingId}`}
+                        onClick={() => setSelectedConversation({ sellerId: chat.otherUserId, listingId: chat.listingId })}
+                        className={`w-full p-3 rounded-lg text-left transition-colors ${
+                          isActive ? 'bg-accent' : 'hover:bg-accent/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <Avatar>
+                            <AvatarImage src={chat.otherUser?.avatar_url || ''} />
+                            <AvatarFallback>
+                              {chat.otherUser?.name?.[0] || 'U'}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium truncate">
+                              {chat.otherUser?.name || 'Unknown User'}
+                            </p>
+                            <p className="text-xs text-muted-foreground truncate">
+                              {chat.listingTitle || ''}
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                  {/* Then show conversations with messages (skip if already in possibleChats) */}
+                  {conversations?.filter(conversation => {
+                    const key = `${conversation.otherUserId}_${conversation.listingId}`;
+                    return !possibleChats?.some(chat => `${chat.otherUserId}_${chat.listingId}` === key);
+                  }).map((conversation) => {
                     const isActive =
                       selectedConversation?.sellerId === conversation.otherUserId &&
                       selectedConversation?.listingId === conversation.listingId;
