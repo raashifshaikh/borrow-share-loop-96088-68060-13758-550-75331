@@ -21,102 +21,93 @@ const Messages = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
-  const paramOrderId = searchParams.get('order');
-  const paramSellerId = searchParams.get('seller');
-  const paramListingId = searchParams.get('listing');
+  const sellerIdParam = searchParams.get('seller');
+  const listingIdParam = searchParams.get('listing');
 
-  const [selectedConversation, setSelectedConversation] = useState<{ otherUserId: string; listingId: string; orderId?: string } | null>(null);
+  const [selectedConversation, setSelectedConversation] = useState<{ sellerId: string, listingId: string, orderId: string | null } | null>(null);
   const [newMessage, setNewMessage] = useState('');
   const [showNegotiationDialog, setShowNegotiationDialog] = useState(false);
   const [negotiationAmount, setNegotiationAmount] = useState('');
   const [negotiationMessage, setNegotiationMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
 
-  // Fetch chats (buyers/sellers per listing)
+  // Fetch all possible chats (unique per listing + other user)
   const { data: possibleChats } = useQuery({
     queryKey: ['possible-chats', user?.id],
     queryFn: async () => {
       if (!user?.id) return [];
 
-      const selling = await supabase
-        .from('listings')
-        .select('id, title, seller_id, profiles(name, avatar_url)')
-        .eq('seller_id', user.id);
-
-      const buying = await supabase
-        .from('orders')
-        .select('id, listing_id, seller_id, buyer_id, listings(title, seller_id, profiles(name, avatar_url))')
-        .eq('buyer_id', user.id);
-
       const chats: any[] = [];
 
-      if (selling.data) {
-        for (const listing of selling.data) {
-          const buyers = await supabase
-            .from('orders')
-            .select('id, buyer_id, profiles(name, avatar_url)')
-            .eq('listing_id', listing.id);
+      // Fetch user's selling listings
+      const sellingRes = await supabase
+        .from('listings')
+        .select('id, title, seller_id, orders(id, buyer_id, profiles(name, avatar_url))')
+        .eq('seller_id', user.id);
 
-          if (buyers.data) {
-            for (const buyer of buyers.data) {
-              if (buyer.buyer_id !== user.id) {
-                chats.push({
-                  otherUserId: buyer.buyer_id,
-                  listingId: listing.id,
-                  otherUser: buyer.profiles || { name: 'Unknown User', avatar_url: '' },
-                  listingTitle: listing.title,
-                  orderId: buyer.id
-                });
-              }
+      if (sellingRes.data) {
+        for (const listing of sellingRes.data) {
+          if (listing.orders) {
+            for (const order of listing.orders) {
+              chats.push({
+                otherUserId: order.buyer_id,
+                listingId: listing.id,
+                listingTitle: listing.title,
+                otherUser: order.profiles || { name: 'Unknown', avatar_url: '' },
+                orderId: order.id
+              });
             }
           }
         }
       }
 
-      if (buying.data) {
-        for (const order of buying.data) {
-          if (order.seller_id !== user.id) {
-            chats.push({
-              otherUserId: order.seller_id,
-              listingId: order.listing_id,
-              otherUser: order.listings?.profiles || { name: 'Unknown User', avatar_url: '' },
-              listingTitle: order.listings?.title || '',
-              orderId: order.id
-            });
-          }
+      // Fetch user's buying orders
+      const buyingRes = await supabase
+        .from('orders')
+        .select('id, listing_id, seller_id, listings(title, seller_id, profiles(name, avatar_url))')
+        .eq('buyer_id', user.id);
+
+      if (buyingRes.data) {
+        for (const order of buyingRes.data) {
+          chats.push({
+            otherUserId: order.seller_id,
+            listingId: order.listing_id,
+            listingTitle: order.listings?.title || '',
+            otherUser: order.listings?.profiles || { name: 'Unknown', avatar_url: '' },
+            orderId: order.id
+          });
         }
       }
 
-      // Deduplicate by otherUserId + listingId
-      const unique = new Map();
-      for (const chat of chats) {
-        const key = `${chat.otherUserId}_${chat.listingId}`;
-        if (!unique.has(key)) unique.set(key, chat);
-      }
-
-      return Array.from(unique.values());
+      return chats;
     },
     enabled: !!user?.id
   });
 
   // Auto-select conversation from URL params
   useEffect(() => {
-    if (paramSellerId && paramListingId && user) {
-      setSelectedConversation({ otherUserId: paramSellerId, listingId: paramListingId, orderId: paramOrderId || undefined });
+    if (!user || !possibleChats) return;
+    if (sellerIdParam && listingIdParam) {
+      const conv = possibleChats.find(c => c.sellerId === sellerIdParam && c.listingId === listingIdParam);
+      if (conv) setSelectedConversation(conv);
     }
-  }, [paramSellerId, paramListingId, paramOrderId, user]);
+  }, [sellerIdParam, listingIdParam, possibleChats, user]);
 
   // Fetch messages for selected conversation
   const { data: messages } = useQuery({
-    queryKey: ['messages', selectedConversation?.otherUserId, selectedConversation?.listingId, user?.id],
+    queryKey: ['messages', selectedConversation?.sellerId, selectedConversation?.listingId, user?.id],
     queryFn: async () => {
       if (!selectedConversation || !user?.id) return [];
 
       const { data } = await supabase
         .from('chat_messages')
-        .select(`*, from_profile:profiles!fk_chat_from_profile(name, avatar_url), to_profile:profiles!fk_chat_to_profile(name, avatar_url)`)
+        .select(`
+          *,
+          from_profile:profiles!fk_chat_from_profile(name, avatar_url),
+          to_profile:profiles!fk_chat_to_profile(name, avatar_url)
+        `)
         .or(
-          `and(from_user_id.eq.${user.id},to_user_id.eq.${selectedConversation.otherUserId}),and(from_user_id.eq.${selectedConversation.otherUserId},to_user_id.eq.${user.id})`
+          `and(from_user_id.eq.${user.id},to_user_id.eq.${selectedConversation.sellerId}),and(from_user_id.eq.${selectedConversation.sellerId},to_user_id.eq.${user.id})`
         )
         .eq('listing_id', selectedConversation.listingId)
         .order('created_at', { ascending: true });
@@ -126,7 +117,7 @@ const Messages = () => {
     enabled: !!selectedConversation && !!user?.id
   });
 
-  // Send new message
+  // Send message
   const sendMessage = async () => {
     if (!newMessage.trim() || !selectedConversation || !user?.id) {
       toast({ title: 'Cannot send empty message or conversation missing', variant: 'destructive' });
@@ -135,10 +126,10 @@ const Messages = () => {
 
     const payload = {
       from_user_id: user.id,
-      to_user_id: selectedConversation.otherUserId,
+      to_user_id: selectedConversation.sellerId,
       listing_id: selectedConversation.listingId,
       message_text: newMessage.trim(),
-      order_id: selectedConversation.orderId || null
+      order_id: selectedConversation.orderId
     };
 
     setIsSending(true);
@@ -153,7 +144,7 @@ const Messages = () => {
       return;
     }
 
-    queryClient.invalidateQueries({ queryKey: ['messages', selectedConversation.otherUserId, selectedConversation.listingId, user?.id] });
+    queryClient.invalidateQueries({ queryKey: ['messages', selectedConversation.sellerId, selectedConversation.listingId, user?.id] });
     setIsSending(false);
   };
 
@@ -176,28 +167,13 @@ const Messages = () => {
       if (error || !data) throw error || new Error('Failed to insert negotiation');
       return data[0];
     },
-    onSuccess: (data) => {
+    onSuccess: () => {
       toast({ title: 'Counter offer sent!', description: 'It is now visible in the chat.' });
       setShowNegotiationDialog(false);
       setNegotiationAmount('');
       setNegotiationMessage('');
-
-      // Optimistically add negotiation to messages
       if (selectedConversation) {
-        queryClient.setQueryData(['messages', selectedConversation.otherUserId, selectedConversation.listingId, user?.id], (old: any) => [
-          ...(old || []),
-          {
-            id: data.id,
-            from_user_id: user.id,
-            to_user_id: selectedConversation.otherUserId,
-            message_text: `Counter Offer: $${data.amount} ${data.message ? `- ${data.message}` : ''}`,
-            listing_id: selectedConversation.listingId,
-            order_id: selectedConversation.orderId,
-            created_at: new Date().toISOString(),
-            from_profile: { name: user.name, avatar_url: user.avatar_url },
-            to_profile: { name: '', avatar_url: '' }
-          }
-        ]);
+        queryClient.invalidateQueries({ queryKey: ['messages', selectedConversation.sellerId, selectedConversation.listingId, user?.id] });
       }
     },
     onError: (error: any) => {
@@ -205,7 +181,7 @@ const Messages = () => {
     }
   });
 
-  // Real-time chat subscription
+  // Realtime subscription
   useEffect(() => {
     if (!selectedConversation || !user?.id) return;
 
@@ -214,9 +190,9 @@ const Messages = () => {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_messages' }, (payload) => {
         const newMsg = payload.new;
         if ([newMsg.from_user_id, newMsg.to_user_id].includes(user.id) &&
-            [newMsg.from_user_id, newMsg.to_user_id].includes(selectedConversation.otherUserId) &&
+            [newMsg.from_user_id, newMsg.to_user_id].includes(selectedConversation.sellerId) &&
             newMsg.listing_id === selectedConversation.listingId) {
-          queryClient.invalidateQueries({ queryKey: ['messages', selectedConversation.otherUserId, selectedConversation.listingId, user.id] });
+          queryClient.invalidateQueries({ queryKey: ['messages', selectedConversation.sellerId, selectedConversation.listingId, user.id] });
         }
       })
       .subscribe();
@@ -234,7 +210,7 @@ const Messages = () => {
           </CardHeader>
           <CardContent className="flex-1 p-0">
             <ScrollArea className="h-full">
-              {!possibleChats?.length ? (
+              {(!possibleChats?.length) ? (
                 <div className="p-6 text-center">
                   <MessageSquare className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                   <p className="text-muted-foreground">No conversations yet</p>
@@ -242,11 +218,11 @@ const Messages = () => {
               ) : (
                 <div className="space-y-1 p-2">
                   {possibleChats.map(chat => {
-                    const isActive = selectedConversation?.otherUserId === chat.otherUserId && selectedConversation?.listingId === chat.listingId;
+                    const isActive = selectedConversation?.sellerId === chat.otherUserId && selectedConversation?.listingId === chat.listingId;
                     return (
                       <button
-                        key={`${chat.otherUserId}_${chat.listingId}`}
-                        onClick={() => setSelectedConversation({ otherUserId: chat.otherUserId, listingId: chat.listingId, orderId: chat.orderId })}
+                        key={`${chat.otherUserId}_${chat.listingId}_${chat.orderId}`}
+                        onClick={() => setSelectedConversation({ sellerId: chat.otherUserId, listingId: chat.listingId, orderId: chat.orderId })}
                         className={`w-full p-3 rounded-lg text-left transition-colors ${isActive ? 'bg-accent' : 'hover:bg-accent/50'}`}
                       >
                         <div className="flex items-center gap-3">
@@ -271,11 +247,7 @@ const Messages = () => {
         {/* Messages */}
         <Card className="flex-1 flex flex-col max-h-[500px]">
           <CardHeader>
-            <CardTitle>
-              {selectedConversation
-                ? `Chat with ${possibleChats?.find(c => c.otherUserId === selectedConversation.otherUserId && c.listingId === selectedConversation.listingId)?.otherUser?.name}`
-                : 'Select a conversation'}
-            </CardTitle>
+            <CardTitle>{selectedConversation ? `Chat with ${possibleChats?.find(c => c.sellerId === selectedConversation.sellerId && c.listingId === selectedConversation.listingId)?.otherUser?.name}` : 'Select a conversation'}</CardTitle>
           </CardHeader>
           <CardContent className="flex-1 p-4 overflow-y-auto flex flex-col gap-2">
             {messages?.map(msg => (
@@ -322,11 +294,20 @@ const Messages = () => {
           <div className="space-y-2">
             <div>
               <Label htmlFor="amount">Amount</Label>
-              <Input id="amount" type="number" value={negotiationAmount} onChange={e => setNegotiationAmount(e.target.value)} />
+              <Input
+                id="amount"
+                type="number"
+                value={negotiationAmount}
+                onChange={e => setNegotiationAmount(e.target.value)}
+              />
             </div>
             <div>
               <Label htmlFor="message">Message (optional)</Label>
-              <Textarea id="message" value={negotiationMessage} onChange={e => setNegotiationMessage(e.target.value)} />
+              <Textarea
+                id="message"
+                value={negotiationMessage}
+                onChange={e => setNegotiationMessage(e.target.value)}
+              />
             </div>
           </div>
           <DialogFooter className="mt-4 flex justify-end gap-2">
