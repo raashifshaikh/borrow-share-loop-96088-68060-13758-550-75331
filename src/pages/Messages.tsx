@@ -11,13 +11,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { formatDistanceToNow } from 'date-fns';
-import { Send, MessageSquare, DollarSign } from 'lucide-react';
+import { Send, MessageSquare, DollarSign, Check, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { RegularMessage } from '@/components/messages/RegularMessage';
-import { NegotiationMessage } from '@/components/messages/NegotiationMessage';
 import { Skeleton } from '@/components/ui/skeleton';
 
 const Messages = () => {
@@ -35,7 +33,7 @@ const Messages = () => {
   const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Fetch conversations
+  // Fetch conversations (grouped by order_id)
   const { data: conversations, isLoading: conversationsLoading } = useQuery({
     queryKey: ['conversations', user?.id],
     queryFn: async () => {
@@ -65,7 +63,7 @@ const Messages = () => {
       const conversationsWithDetails = await Promise.all(
         orders.map(async (order) => {
           const otherUserId = order.buyer_id === user.id ? order.seller_id : order.buyer_id;
-
+          
           const { data: profile } = await supabase
             .from('profiles')
             .select('id, name, avatar_url')
@@ -117,7 +115,7 @@ const Messages = () => {
     }
   }, [orderIdParam, conversations, user, selectedOrderId]);
 
-  // Fetch messages and negotiations
+  // Fetch messages and negotiations for selected order
   const { data: messages, isLoading: messagesLoading } = useQuery({
     queryKey: ['messages', selectedOrderId],
     queryFn: async () => {
@@ -152,12 +150,12 @@ const Messages = () => {
     enabled: !!selectedOrderId
   });
 
-  // Auto-scroll
+  // Auto-scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Mark as read
+  // Mark messages as read
   useEffect(() => {
     if (!selectedOrderId || !user?.id || !messages) return;
 
@@ -180,6 +178,7 @@ const Messages = () => {
   // Send message
   const sendMessage = async () => {
     if (!newMessage.trim() || !selectedOrderId || !user?.id) return;
+
     const currentConv = conversations?.find(c => c.orderId === selectedOrderId);
     if (!currentConv) return;
 
@@ -196,6 +195,7 @@ const Messages = () => {
     setNewMessage('');
 
     const { error } = await supabase.from('chat_messages').insert([payload]);
+
     if (error) {
       toast({ title: 'Failed to send message', description: error.message, variant: 'destructive' });
       setNewMessage(messageText);
@@ -209,6 +209,9 @@ const Messages = () => {
       const negotiation = messages?.find(m => m.id === negotiationId);
       if (!negotiation || !selectedOrderId || negotiation.type !== 'negotiation') throw new Error('Negotiation not found');
       if (!('amount' in negotiation)) throw new Error('Invalid negotiation');
+
+      const currentConv = conversations?.find(c => c.orderId === selectedOrderId);
+      if (!currentConv) throw new Error('Conversation not found');
 
       await supabase.from('order_negotiations').insert({
         order_id: selectedOrderId,
@@ -322,6 +325,117 @@ const Messages = () => {
     };
   }, [selectedOrderId, queryClient]);
 
+  // Render regular message
+  const renderRegularMessage = (msg: any, isFromMe: boolean, showAvatar: boolean) => {
+    return (
+      <div className={`flex gap-2 ${isFromMe ? 'justify-end' : 'justify-start'}`}>
+        {!isFromMe && showAvatar && (
+          <Avatar className="h-8 w-8">
+            <AvatarImage src={msg.from_user?.avatar_url || ''} />
+            <AvatarFallback>{msg.from_user?.name?.[0] || 'U'}</AvatarFallback>
+          </Avatar>
+        )}
+        
+        <div className={`max-w-[70%] ${isFromMe ? 'order-first' : ''}`}>
+          <div className={`rounded-lg px-3 py-2 ${
+            isFromMe 
+              ? 'bg-primary text-primary-foreground' 
+              : 'bg-muted'
+          }`}>
+            <p className="text-sm">{msg.message_text}</p>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1 px-1">
+            {formatDistanceToNow(new Date(msg.created_at), { addSuffix: true })}
+          </p>
+        </div>
+
+        {isFromMe && showAvatar && (
+          <Avatar className="h-8 w-8">
+            <AvatarImage src={msg.from_user?.avatar_url || ''} />
+            <AvatarFallback>{msg.from_user?.name?.[0] || 'U'}</AvatarFallback>
+          </Avatar>
+        )}
+      </div>
+    );
+  };
+
+  // Render negotiation message
+  const renderNegotiationMessage = (negotiation: any, isFromMe: boolean) => {
+    const isAccepted = negotiation.action === 'accept';
+    const isDeclined = negotiation.action === 'decline';
+    const isCounter = negotiation.action === 'counter';
+    const isNewOffer = !isAccepted && !isDeclined && !isCounter;
+
+    const getStatusColor = () => {
+      if (isAccepted) return 'bg-green-100 text-green-800 border-green-200';
+      if (isDeclined) return 'bg-red-100 text-red-800 border-red-200';
+      if (isCounter) return 'bg-blue-100 text-blue-800 border-blue-200';
+      return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+    };
+
+    const getStatusText = () => {
+      if (isAccepted) return 'Accepted';
+      if (isDeclined) return 'Declined';
+      if (isCounter) return 'Counter Offer';
+      return 'New Offer';
+    };
+
+    return (
+      <div className={`flex justify-center my-4`}>
+        <div className={`max-w-md w-full p-4 rounded-lg border ${getStatusColor()}`}>
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <DollarSign className="h-4 w-4" />
+              <span className="font-medium">Price Negotiation</span>
+            </div>
+            <Badge variant="secondary" className="text-xs">
+              {getStatusText()}
+            </Badge>
+          </div>
+          
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-2xl font-bold">${negotiation.amount?.toFixed(2)}</span>
+            {isNewOffer && !isFromMe && (
+              <div className="flex gap-2">
+                <Button 
+                  size="sm" 
+                  onClick={() => acceptNegotiation.mutate(negotiation.id)}
+                  className="h-8 px-2"
+                >
+                  <Check className="h-3 w-3 mr-1" />
+                  Accept
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  onClick={() => declineNegotiation.mutate(negotiation.id)}
+                  className="h-8 px-2"
+                >
+                  <X className="h-3 w-3 mr-1" />
+                  Decline
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {negotiation.message && (
+            <p className="text-sm mb-2">{negotiation.message}</p>
+          )}
+
+          <p className="text-xs text-muted-foreground">
+            {formatDistanceToNow(new Date(negotiation.created_at), { addSuffix: true })}
+          </p>
+
+          {isNewOffer && isFromMe && (
+            <p className="text-xs text-muted-foreground mt-2">
+              Waiting for response...
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const selectedConversation = conversations?.find(c => c.orderId === selectedOrderId);
 
   return (
@@ -409,7 +523,7 @@ const Messages = () => {
           <CardHeader className="border-b">
             <div className="flex items-center justify-between">
               <CardTitle>
-                {selectedConversation
+                {selectedConversation 
                   ? `${selectedConversation.otherUser.name} - ${selectedConversation.listingTitle}`
                   : 'Select a conversation'}
               </CardTitle>
@@ -418,7 +532,7 @@ const Messages = () => {
               )}
             </div>
           </CardHeader>
-
+          
           <CardContent className="flex-1 p-4 overflow-hidden flex flex-col">
             {messagesLoading ? (
               <div className="space-y-4">
@@ -444,43 +558,23 @@ const Messages = () => {
                   </div>
                 ) : (
                   <div className="space-y-1">
-                    {messages.map((msg, index) => {
+                    {messages?.map((msg, index) => {
                       const isFromMe = msg.from_user_id === user?.id;
                       const prevMsg = index > 0 ? messages[index - 1] : null;
-                      const showAvatar = !prevMsg || prevMsg.from_user_id !== msg.from_user_id;
+                      const showAvatar = !prevMsg || prevMsg.from_user_id !== msg.from_user_id || prevMsg.type !== msg.type;
 
                       if (msg.type === 'negotiation') {
-                        const displayText = msg.message
-                          ? msg.message
-                          : msg.amount
-                            ? `Offer: $${parseFloat(msg.amount).toFixed(2)}`
-                            : 'Offer sent';
-
                         return (
-                          <NegotiationMessage
-                            key={msg.id}
-                            negotiation={{ ...msg, displayText }}
-                            currentUserId={user?.id || ''}
-                            onAccept={(id) => acceptNegotiation.mutate(id)}
-                            onDecline={(id) => declineNegotiation.mutate(id)}
-                            onCounter={() => {
-                              if ('amount' in msg && msg.amount) {
-                                setNegotiationAmount(msg.amount.toString());
-                              }
-                              setShowNegotiationDialog(true);
-                            }}
-                            canRespond={!isFromMe}
-                          />
+                          <div key={msg.id}>
+                            {renderNegotiationMessage(msg, isFromMe)}
+                          </div>
                         );
                       }
 
                       return (
-                        <RegularMessage
-                          key={msg.id}
-                          message={msg}
-                          isFromCurrentUser={isFromMe}
-                          showAvatar={showAvatar}
-                        />
+                        <div key={msg.id}>
+                          {renderRegularMessage(msg, isFromMe, showAvatar)}
+                        </div>
                       );
                     })}
                     <div ref={messagesEndRef} />
@@ -503,8 +597,8 @@ const Messages = () => {
                 <Button onClick={sendMessage} disabled={!newMessage.trim() || isSending}>
                   <Send className="w-4 h-4" />
                 </Button>
-                <Button
-                  variant="outline"
+                <Button 
+                  variant="outline" 
                   onClick={() => setShowNegotiationDialog(true)}
                   disabled={isSending}
                 >
@@ -521,7 +615,9 @@ const Messages = () => {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Send Counter Offer</DialogTitle>
-            <DialogDescription>Propose a new price for this order</DialogDescription>
+            <DialogDescription>
+              Propose a new price for this order
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
@@ -546,9 +642,11 @@ const Messages = () => {
               />
             </div>
           </div>
-          <DialogFooter className="mt-4 flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setShowNegotiationDialog(false)}>Cancel</Button>
-            <Button
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setShowNegotiationDialog(false)}>
+              Cancel
+            </Button>
+            <Button 
               onClick={() => sendCounterOffer.mutate()}
               disabled={!negotiationAmount || parseFloat(negotiationAmount) <= 0}
             >
