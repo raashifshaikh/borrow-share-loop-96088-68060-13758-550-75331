@@ -243,31 +243,72 @@ const OrderDetail = () => {
   };
 
   // Listen for payment success and verify
+  const [isVerifying, setIsVerifying] = useState(false);
+  
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const sessionId = params.get('session_id');
     
-    if (params.get('payment') === 'success' && sessionId) {
+    if (params.get('payment') === 'success' && sessionId && !isVerifying) {
+      setIsVerifying(true);
+      console.log('[OrderDetail] Starting payment verification...', sessionId);
+      
       // Verify payment with backend
       supabase.functions.invoke('verify-payment', {
         body: { session_id: sessionId, order_id: id }
-      }).then(({ data, error }) => {
+      }).then(async ({ data, error }) => {
+        console.log('[OrderDetail] Verification response:', { data, error });
+        
         if (error) {
-          toast({ title: 'Payment verification failed', description: error.message, variant: 'destructive' });
+          console.error('[OrderDetail] Verification error:', error);
+          toast({ 
+            title: 'Payment verification failed', 
+            description: error.message || 'Please contact support',
+            variant: 'destructive' 
+          });
         } else {
-          toast({ title: 'Payment successful!', description: 'Your order has been confirmed. QR code will be generated automatically.' });
-          queryClient.invalidateQueries({ queryKey: ['order', id] });
+          toast({ 
+            title: 'Payment successful!', 
+            description: 'Your order has been confirmed.',
+            duration: 5000
+          });
+          
+          // Refresh order data
+          await queryClient.invalidateQueries({ queryKey: ['order', id] });
+          
           // Auto-generate QR code after payment
-          setTimeout(() => {
-            supabase.rpc('generate_order_qr_code', { p_order_id: id }).then(() => {
-              queryClient.invalidateQueries({ queryKey: ['order', id] });
-            });
+          console.log('[OrderDetail] Generating QR code...');
+          setTimeout(async () => {
+            const { error: qrError } = await supabase.rpc('generate_order_qr_code', { p_order_id: id });
+            if (qrError) {
+              console.error('[OrderDetail] QR generation error:', qrError);
+            } else {
+              await queryClient.invalidateQueries({ queryKey: ['order', id] });
+            }
           }, 1000);
         }
+        
+        // Clean URL
         navigate(`/orders/${id}`, { replace: true });
+        setIsVerifying(false);
+      }).catch((err) => {
+        console.error('[OrderDetail] Unexpected error:', err);
+        toast({ 
+          title: 'Verification error', 
+          description: 'An unexpected error occurred',
+          variant: 'destructive' 
+        });
+        setIsVerifying(false);
       });
+    } else if (params.get('payment') === 'cancelled') {
+      toast({ 
+        title: 'Payment cancelled', 
+        description: 'You can try again when ready',
+        variant: 'default'
+      });
+      navigate(`/orders/${id}`, { replace: true });
     }
-  }, [id, toast, queryClient, navigate]);
+  }, [id, toast, queryClient, navigate, isVerifying]);
 
   if (isLoading) {
     return (
@@ -411,7 +452,10 @@ const OrderDetail = () => {
               {canChat && (
                 <>
                   <Separator />
-                  <Link to={`/messages?order=${id}`} className="block w-full">
+                  <Link 
+                    to={`/messages?seller=${isBuyer ? order.seller_id : order.buyer_id}&listing=${order.listing_id}`} 
+                    className="block w-full"
+                  >
                     <Button className="w-full min-h-[44px]" size="default" variant="outline">
                       <MessageSquare className="h-5 w-5 mr-2" />
                       Open Chat
@@ -534,11 +578,31 @@ const OrderDetail = () => {
                 className="w-full min-h-[52px]" 
                 size="lg" 
                 onClick={initiatePayment}
-                disabled={isPaymentLoading}
+                disabled={isPaymentLoading || isVerifying}
               >
                 <CreditCard className="h-6 w-6 mr-2" />
-                {isPaymentLoading ? 'Processing...' : 'Proceed to Payment'}
+                {isPaymentLoading ? 'Opening payment page...' : isVerifying ? 'Verifying payment...' : 'Proceed to Payment'}
               </Button>
+              {(isPaymentLoading || isVerifying) && (
+                <p className="text-xs text-center text-muted-foreground animate-pulse">
+                  {isPaymentLoading ? 'Redirecting to secure payment page...' : 'Confirming your payment with Stripe...'}
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Payment Verification Status */}
+        {isBuyer && isVerifying && (
+          <Card className="border-primary bg-primary/5">
+            <CardContent className="py-6">
+              <div className="flex items-center gap-3">
+                <div className="h-8 w-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                <div>
+                  <p className="font-medium">Verifying your payment...</p>
+                  <p className="text-sm text-muted-foreground">This will only take a moment</p>
+                </div>
+              </div>
             </CardContent>
           </Card>
         )}

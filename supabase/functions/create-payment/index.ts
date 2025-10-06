@@ -13,6 +13,7 @@ serve(async (req) => {
   }
 
   try {
+    console.log('[create-payment] Starting payment creation...');
     const authHeader = req.headers.get("Authorization")!;
     const token = authHeader.replace("Bearer ", "");
     
@@ -28,11 +29,14 @@ serve(async (req) => {
     
     const { data } = await supabaseClient.auth.getUser(token);
     const user = data.user;
+    console.log('[create-payment] User authenticated:', user?.id);
     if (!user?.email) throw new Error("User not authenticated");
 
     const { order_id } = await req.json();
+    console.log('[create-payment] Order ID:', order_id);
 
     // Get order details
+    console.log('[create-payment] Fetching order details...');
     const { data: order, error: orderError } = await supabaseClient
       .from("orders")
       .select(`
@@ -42,21 +46,30 @@ serve(async (req) => {
       .eq("id", order_id)
       .single();
 
-    if (orderError || !order) throw new Error("Order not found");
+    if (orderError) {
+      console.error('[create-payment] Order fetch error:', orderError);
+      throw new Error(`Order not found: ${orderError.message}`);
+    }
+    if (!order) throw new Error("Order not found");
+    console.log('[create-payment] Order found:', order.id, 'Status:', order.status);
     if (order.buyer_id !== user.id) throw new Error("Unauthorized");
 
+    console.log('[create-payment] Initializing Stripe...');
     const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") || "", {
       apiVersion: "2024-11-20.acacia",
     });
 
     // Check for existing customer
+    console.log('[create-payment] Checking for existing customer...');
     const customers = await stripe.customers.list({ email: user.email, limit: 1 });
     let customerId = customers.data[0]?.id;
 
     if (!customerId) {
+      console.log('[create-payment] Creating new customer...');
       const customer = await stripe.customers.create({ email: user.email });
       customerId = customer.id;
     }
+    console.log('[create-payment] Customer ID:', customerId);
 
     // Create payment intent
     const paymentIntent = await stripe.paymentIntents.create({
@@ -76,6 +89,7 @@ serve(async (req) => {
       .eq("id", order_id);
 
     // Create checkout session
+    console.log('[create-payment] Creating checkout session...');
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       line_items: [
@@ -100,6 +114,9 @@ serve(async (req) => {
         },
       },
     });
+
+    console.log('[create-payment] Checkout session created:', session.id);
+    console.log('[create-payment] Checkout URL:', session.url);
 
     return new Response(JSON.stringify({ url: session.url }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

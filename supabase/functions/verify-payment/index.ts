@@ -23,35 +23,48 @@ serve(async (req) => {
   );
 
   try {
+    console.log('[verify-payment] Starting payment verification...');
     const authHeader = req.headers.get("Authorization")!;
     const token = authHeader.replace("Bearer ", "");
     const { data } = await supabaseClient.auth.getUser(token);
     const user = data.user;
+    console.log('[verify-payment] User authenticated:', user?.id);
     if (!user?.email) throw new Error("User not authenticated");
 
     const { session_id, order_id } = await req.json();
+    console.log('[verify-payment] Session ID:', session_id, 'Order ID:', order_id);
 
     if (!session_id) throw new Error("Session ID required");
 
+    console.log('[verify-payment] Initializing Stripe...');
     const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") || "", {
       apiVersion: "2024-11-20.acacia",
     });
 
     // Verify the session with Stripe
+    console.log('[verify-payment] Retrieving Stripe session...');
     const session = await stripe.checkout.sessions.retrieve(session_id);
+    console.log('[verify-payment] Session payment status:', session.payment_status);
 
     if (session.payment_status !== "paid") {
+      console.error('[verify-payment] Payment not completed. Status:', session.payment_status);
       throw new Error("Payment not completed");
     }
 
     // Get order to verify ownership
+    console.log('[verify-payment] Fetching order...');
     const { data: order, error: orderError } = await supabaseClient
       .from("orders")
       .select("*")
       .eq("id", order_id)
       .single();
 
-    if (orderError || !order) throw new Error("Order not found");
+    if (orderError) {
+      console.error('[verify-payment] Order fetch error:', orderError);
+      throw new Error(`Order not found: ${orderError.message}`);
+    }
+    if (!order) throw new Error("Order not found");
+    console.log('[verify-payment] Order found:', order.id, 'Current status:', order.status);
     if (order.buyer_id !== user.id) throw new Error("Unauthorized");
 
     // Fetch related data separately
@@ -69,21 +82,27 @@ serve(async (req) => {
     };
 
     // Update order status to paid
+    console.log('[verify-payment] Updating order status to paid...');
     const { error: updateError } = await supabaseClient
       .from("orders")
       .update({
         status: "paid",
-        stripe_payment_intent_id: session.payment_intent,
+        stripe_payment_intent_id: session.payment_intent as string,
       })
       .eq("id", order_id);
 
-    if (updateError) throw updateError;
+    if (updateError) {
+      console.error('[verify-payment] Order update error:', updateError);
+      throw updateError;
+    }
+    console.log('[verify-payment] Order status updated successfully');
 
     // Award XP for successful transaction
+    console.log('[verify-payment] Awarding XP...');
     await supabaseClient.rpc('award_xp', { p_user_id: order.buyer_id, p_xp: 50 });
     await supabaseClient.rpc('award_xp', { p_user_id: order.seller_id, p_xp: 50 });
 
-    console.log(`Payment verified for order ${order_id}, session ${session_id}`);
+    console.log(`[verify-payment] Payment verified for order ${order_id}, session ${session_id}`);
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
