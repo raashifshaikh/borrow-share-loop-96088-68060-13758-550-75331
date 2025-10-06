@@ -1,3 +1,40 @@
+
+import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
+import { formatDistanceToNow } from 'date-fns';
+import { Send, MessageSquare, Package, DollarSign } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import { useToast } from '@/hooks/use-toast';
+
+const Messages = () => {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
+  const orderId = searchParams.get('order');
+  // New: support seller and listing params for unique chat
+  const sellerId = searchParams.get('seller');
+  const listingId = searchParams.get('listing');
+  // Use a composite key for unique chat per seller+listing
+  const [selectedConversation, setSelectedConversation] = useState<{ sellerId: string, listingId: string } | null>(null);
+  const [newMessage, setNewMessage] = useState('');
+  const [showNegotiationDialog, setShowNegotiationDialog] = useState(false);
+  const [negotiationAmount, setNegotiationAmount] = useState('');
+  const [negotiationMessage, setNegotiationMessage] = useState('');
+  const [isSending, setIsSending] = useState(false);
+
   // Query all listings the user is involved in (as buyer or seller)
   const { data: possibleChats } = useQuery({
     queryKey: ['possible-chats', user?.id],
@@ -62,41 +99,6 @@
     },
     enabled: !!user?.id
   });
-import { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/hooks/useAuth';
-import { formatDistanceToNow } from 'date-fns';
-import { Send, MessageSquare, Package, DollarSign } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { useToast } from '@/hooks/use-toast';
-
-const Messages = () => {
-  const { user } = useAuth();
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const [searchParams] = useSearchParams();
-  const orderId = searchParams.get('order');
-  // New: support seller and listing params for unique chat
-  const sellerId = searchParams.get('seller');
-  const listingId = searchParams.get('listing');
-  // Use a composite key for unique chat per seller+listing
-  const [selectedConversation, setSelectedConversation] = useState<{ sellerId: string, listingId: string } | null>(null);
-  const [newMessage, setNewMessage] = useState('');
-  const [showNegotiationDialog, setShowNegotiationDialog] = useState(false);
-  const [negotiationAmount, setNegotiationAmount] = useState('');
-  const [negotiationMessage, setNegotiationMessage] = useState('');
-  const [isSending, setIsSending] = useState(false);
 
   // Get all conversations for the user, grouped by seller+listing for uniqueness
   const { data: conversations } = useQuery({
@@ -113,12 +115,16 @@ const Messages = () => {
 
       // If join fails, fallback to just '*'
       if (error) {
-        ({ data } = await supabase
+        const fallback = await supabase
           .from('chat_messages')
           .select('*')
           .or(`from_user_id.eq.${user.id},to_user_id.eq.${user.id}`)
-          .order('created_at', { ascending: false })
-        );
+          .order('created_at', { ascending: false });
+        data = fallback.data?.map(msg => ({
+          ...msg,
+          from_profile: { name: 'Unknown User', avatar_url: '' },
+          to_profile: { name: 'Unknown User', avatar_url: '' }
+        }));
       }
 
       // Group by otherUserId + listing_id for unique chat per item/service
@@ -453,7 +459,7 @@ const Messages = () => {
                     </div>
                     <div className="flex gap-2">
                       <Badge variant={orderContext.status === 'accepted' ? 'default' : 'secondary'}>
-                        {orderContext.status}
+                        {String(orderContext.status)}
                       </Badge>
                       {orderContext.status === 'pending' && (
                         <Button size="sm" variant="outline" onClick={() => setShowNegotiationDialog(true)}>
