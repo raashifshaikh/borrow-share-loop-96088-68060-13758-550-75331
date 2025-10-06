@@ -27,53 +27,57 @@ const Messages = () => {
   const sellerId = searchParams.get('seller');
   const listingId = searchParams.get('listing');
   // Use a composite key for unique chat per seller+listing
-  const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
-  const [selectedListingId, setSelectedListingId] = useState<string | null>(null);
+  const [selectedConversation, setSelectedConversation] = useState<{ sellerId: string, listingId: string } | null>(null);
   const [newMessage, setNewMessage] = useState('');
   const [showNegotiationDialog, setShowNegotiationDialog] = useState(false);
   const [negotiationAmount, setNegotiationAmount] = useState('');
   const [negotiationMessage, setNegotiationMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
 
-  // Get all conversations for the user with profile data
+  // Get all conversations for the user, grouped by seller+listing for uniqueness
   const { data: conversations } = useQuery({
     queryKey: ['conversations', user?.id],
     queryFn: async () => {
       if (!user?.id) return [];
 
-      const { data, error } = await supabase
+      // Try with profile join for avatars/names
+      let { data, error } = await supabase
         .from('chat_messages')
-        .select('*, from_profile:profiles!chat_messages_from_user_id_fkey(name, avatar_url), to_profile:profiles!chat_messages_to_user_id_fkey(name, avatar_url), listings(title)')
-        .in('from_user_id', [user.id])
+        .select(`*, from_profile:profiles!fk_chat_from_profile(name, avatar_url), to_profile:profiles!fk_chat_to_profile(name, avatar_url)`)
+        .or(`from_user_id.eq.${user.id},to_user_id.eq.${user.id}`)
         .order('created_at', { ascending: false });
 
+      // If join fails, fallback to just '*'
       if (error) {
-        console.error('Error fetching conversations:', error);
-        return [];
+        ({ data } = await supabase
+          .from('chat_messages')
+          .select('*')
+          .or(`from_user_id.eq.${user.id},to_user_id.eq.${user.id}`)
+          .order('created_at', { ascending: false })
+        );
       }
 
-      // Get messages where user is receiver
-      const { data: receivedData } = await supabase
-        .from('chat_messages')
-        .select('*, from_profile:profiles!chat_messages_from_user_id_fkey(name, avatar_url), to_profile:profiles!chat_messages_to_user_id_fkey(name, avatar_url), listings(title)')
-        .in('to_user_id', [user.id])
-        .order('created_at', { ascending: false });
-
-      const allMessages = [...(data || []), ...(receivedData || [])];
-
-      // Group by otherUserId + listing_id
+      // Group by otherUserId + listing_id for unique chat per item/service
       const conversationMap = new Map();
-      allMessages.forEach(message => {
-        const otherUserId = message.from_user_id === user.id ? message.to_user_id : message.from_user_id;
-        const otherProfile = message.from_user_id === user.id ? message.to_profile : message.from_profile;
-        const key = `${otherUserId}_${message.listing_id || 'general'}`;
-        
-        if (!conversationMap.has(key) || new Date(message.created_at) > new Date(conversationMap.get(key).created_at)) {
+      data?.forEach(message => {
+        const otherUserId = message.from_user_id === user.id 
+          ? message.to_user_id 
+          : message.from_user_id;
+        // Prefer profile info from join if available
+        let otherUser = { name: 'Unknown User', avatar_url: '' };
+        if (message.from_user_id === user.id && message.to_profile) {
+          otherUser = message.to_profile;
+        } else if (message.from_user_id !== user.id && message.from_profile) {
+          otherUser = message.from_profile;
+        }
+        const key = `${otherUserId}_${message.listing_id || ''}`;
+        if (!conversationMap.has(key) || 
+            new Date(message.created_at) > new Date(conversationMap.get(key).created_at)) {
           conversationMap.set(key, {
             ...message,
             otherUserId,
             listingId: message.listing_id,
-            otherUser: otherProfile || { name: 'Unknown User', avatar_url: '' }
+            otherUser
           });
         }
       });
@@ -82,32 +86,26 @@ const Messages = () => {
     enabled: !!user?.id
   });
 
-  // Get messages for selected conversation
+  // Get messages for selected conversation (by seller+listing)
   const { data: messages } = useQuery({
-    queryKey: ['messages', selectedConversation, selectedListingId, user?.id],
+    queryKey: ['messages', selectedConversation?.sellerId, selectedConversation?.listingId, user?.id],
     queryFn: async () => {
       if (!selectedConversation || !user?.id) return [];
 
-      const { data: sentMessages } = await supabase
+      // Only fetch messages for this seller+listing, with optional profile join
+      const { data, error } = await supabase
         .from('chat_messages')
-        .select('*')
-        .eq('from_user_id', user.id)
-        .eq('to_user_id', selectedConversation)
-        .eq('listing_id', selectedListingId)
+        .select(`*, from_profile:profiles!fk_chat_from_profile(name, avatar_url), to_profile:profiles!fk_chat_to_profile(name, avatar_url)`)
+        .or(
+          `and(from_user_id.eq.${user.id},to_user_id.eq.${selectedConversation.sellerId}),and(from_user_id.eq.${selectedConversation.sellerId},to_user_id.eq.${user.id})`
+        )
+        .eq('listing_id', selectedConversation.listingId)
         .order('created_at', { ascending: true });
 
-      const { data: receivedMessages } = await supabase
-        .from('chat_messages')
-        .select('*')
-        .eq('from_user_id', selectedConversation)
-        .eq('to_user_id', user.id)
-        .eq('listing_id', selectedListingId)
-        .order('created_at', { ascending: true });
-
-      const allMessages = [...(sentMessages || []), ...(receivedMessages || [])];
-      return allMessages.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      // If you get a 400 error, change the select to just '*' above
+      return data || [];
     },
-    enabled: !!selectedConversation && !!user?.id
+    enabled: !!selectedConversation && !!user?.id && !!selectedConversation.listingId
   });
 
   // Get order context if linked
@@ -125,25 +123,13 @@ const Messages = () => {
     enabled: !!orderId
   });
 
-  // Get negotiations for the current context
-  const { data: chatNegotiations } = useQuery({
-    queryKey: ['chat-negotiations', orderId],
-    queryFn: async () => {
-      if (!orderId) return [];
-      const { data } = await supabase
-        .from('order_negotiations')
-        .select('*, from_profile:profiles!order_negotiations_from_user_id_fkey(name)')
-        .eq('order_id', orderId)
-        .order('created_at', { ascending: true });
-      return data || [];
-    },
-    enabled: !!orderId
-  });
-
   const sendMessage = async () => {
     if (!newMessage.trim() || !selectedConversation || !user?.id || isSending) return;
 
     const messageText = newMessage.trim();
+    const tempId = `temp-${Date.now()}`;
+    
+    // Optimistic update
     setNewMessage('');
     setIsSending(true);
 
@@ -152,22 +138,28 @@ const Messages = () => {
         .from('chat_messages')
         .insert([{
           from_user_id: user.id,
-          to_user_id: selectedConversation,
+          to_user_id: selectedConversation.sellerId,
+          listing_id: selectedConversation.listingId,
           message_text: messageText,
-          listing_id: selectedListingId,
           order_id: orderId || null
         }]);
 
       if (error) throw error;
 
-      queryClient.invalidateQueries({ queryKey: ['messages', selectedConversation, selectedListingId, user?.id] });
+      queryClient.invalidateQueries({ queryKey: ['messages', selectedConversation.sellerId, selectedConversation.listingId, user?.id] });
       queryClient.invalidateQueries({ queryKey: ['conversations', user?.id] });
+      
+      toast({ 
+        title: 'Message sent',
+        description: 'Your message was delivered successfully' 
+      });
     } catch (error: any) {
       console.error('Failed to send message:', error);
-      setNewMessage(messageText);
+      setNewMessage(messageText); // Restore message on error
+      
       toast({
         title: 'Failed to send message',
-        description: error.message || 'Please try again',
+        description: error.message || 'Please check your connection and try again',
         variant: 'destructive'
       });
     } finally {
@@ -203,21 +195,23 @@ const Messages = () => {
     }
   });
 
-  // Auto-select conversation from query params
+  // Auto-select conversation from query params (seller+listing)
   useEffect(() => {
     if (sellerId && listingId && user) {
+      // Don't allow chatting with yourself
       if (sellerId !== user.id) {
-        setSelectedConversation(sellerId);
-        setSelectedListingId(listingId);
+        setSelectedConversation({ sellerId, listingId });
       }
     } else if (orderContext && user) {
-      const otherUserId = orderContext.seller_id === user.id ? orderContext.buyer_id : orderContext.seller_id;
-      setSelectedConversation(otherUserId);
-      setSelectedListingId(orderContext.listing_id);
+      // fallback: order context
+      const otherUserId = orderContext.seller_id === user.id 
+        ? orderContext.buyer_id 
+        : orderContext.seller_id;
+      setSelectedConversation({ sellerId: otherUserId, listingId: orderContext.listing_id });
     }
   }, [sellerId, listingId, user, orderContext]);
 
-  // Setup realtime subscription for new messages
+  // Setup realtime subscription for new messages (fix: listen to all inserts, filter in callback)
   useEffect(() => {
     if (!selectedConversation || !user?.id) return;
 
@@ -231,13 +225,14 @@ const Messages = () => {
           table: 'chat_messages',
         },
         (payload) => {
-          const newMsg = payload.new as any;
+          const newMsg = payload.new;
+          // Only update if the message is between these two users and for the same listing
           if (
             [newMsg.from_user_id, newMsg.to_user_id].includes(user.id) &&
-            [newMsg.from_user_id, newMsg.to_user_id].includes(selectedConversation) &&
-            newMsg.listing_id === selectedListingId
+            [newMsg.from_user_id, newMsg.to_user_id].includes(selectedConversation.sellerId) &&
+            newMsg.listing_id === selectedConversation.listingId
           ) {
-            queryClient.invalidateQueries({ queryKey: ['messages', selectedConversation, selectedListingId, user.id] });
+            queryClient.invalidateQueries({ queryKey: ['messages', selectedConversation.sellerId, selectedConversation.listingId, user.id] });
             queryClient.invalidateQueries({ queryKey: ['conversations', user.id] });
           }
         }
@@ -247,22 +242,7 @@ const Messages = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [selectedConversation, selectedListingId, user?.id, queryClient]);
-
-  // Auto-scroll to bottom when messages change
-  useEffect(() => {
-    if (messages && messages.length > 0) {
-      const scrollArea = document.getElementById('messages-scroll-area');
-      if (scrollArea) {
-        const scrollContainer = scrollArea.querySelector('[data-radix-scroll-area-viewport]');
-        if (scrollContainer) {
-          setTimeout(() => {
-            scrollContainer.scrollTop = scrollContainer.scrollHeight;
-          }, 100);
-        }
-      }
-    }
-  }, [messages]);
+  }, [selectedConversation, user?.id, queryClient]);
 
   return (
     <DashboardLayout>
@@ -282,14 +262,13 @@ const Messages = () => {
               ) : (
                 <div className="space-y-1 p-2">
                   {conversations?.map((conversation) => {
-                    const isActive = selectedConversation === conversation.otherUserId && selectedListingId === conversation.listingId;
+                    const isActive =
+                      selectedConversation?.sellerId === conversation.otherUserId &&
+                      selectedConversation?.listingId === conversation.listingId;
                     return (
                       <button
-                        key={`${conversation.otherUserId}_${conversation.listingId || 'general'}`}
-                        onClick={() => {
-                          setSelectedConversation(conversation.otherUserId);
-                          setSelectedListingId(conversation.listingId);
-                        }}
+                        key={`${conversation.otherUserId}_${conversation.listingId}`}
+                        onClick={() => setSelectedConversation({ sellerId: conversation.otherUserId, listingId: conversation.listingId })}
                         className={`w-full p-3 rounded-lg text-left transition-colors ${
                           isActive ? 'bg-accent' : 'hover:bg-accent/50'
                         }`}
@@ -305,11 +284,6 @@ const Messages = () => {
                             <p className="font-medium truncate">
                               {conversation.otherUser?.name || 'Unknown User'}
                             </p>
-                            {conversation.listings?.title && (
-                              <p className="text-xs text-muted-foreground truncate">
-                                Re: {conversation.listings.title}
-                              </p>
-                            )}
                             <p className="text-sm text-muted-foreground truncate">
                               {conversation.message_text}
                             </p>
@@ -348,10 +322,10 @@ const Messages = () => {
                       <Badge variant={orderContext.status === 'accepted' ? 'default' : 'secondary'}>
                         {orderContext.status}
                       </Badge>
-                      {['pending', 'accepted'].includes(orderContext.status) && (
+                      {orderContext.status === 'pending' && (
                         <Button size="sm" variant="outline" onClick={() => setShowNegotiationDialog(true)}>
                           <DollarSign className="h-4 w-4 mr-1" />
-                          Make Offer
+                          Negotiate
                         </Button>
                       )}
                     </div>
@@ -360,61 +334,33 @@ const Messages = () => {
               )}
 
               <CardContent className="flex-1 p-0">
-                <ScrollArea className="h-full p-4" id="messages-scroll-area">
+                <ScrollArea className="h-full p-4">
                   <div className="space-y-4">
-                    {messages?.length === 0 && (!chatNegotiations || chatNegotiations.length === 0) ? (
-                      <div className="text-center py-12 text-muted-foreground">
-                        <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                        <p>No messages yet. Start the conversation!</p>
+                    {messages?.map((message) => (
+                      <div
+                        key={message.id}
+                        className={`flex ${
+                          message.from_user_id === user?.id ? 'justify-end' : 'justify-start'
+                        }`}
+                      >
+                        <div
+                          className={`max-w-sm px-4 py-2 rounded-lg ${
+                            message.from_user_id === user?.id
+                              ? 'bg-primary text-primary-foreground'
+                              : 'bg-muted'
+                          }`}
+                        >
+                          <p>{message.message_text}</p>
+                          <p className={`text-xs mt-1 ${
+                            message.from_user_id === user?.id
+                              ? 'text-primary-foreground/70'
+                              : 'text-muted-foreground'
+                          }`}>
+                            {formatDistanceToNow(new Date(message.created_at))} ago
+                          </p>
+                        </div>
                       </div>
-                    ) : (
-                      <>
-                        {/* Display negotiation history as system messages */}
-                        {chatNegotiations?.map((neg: any) => (
-                          <div key={`neg-${neg.id}`} className="flex justify-center">
-                            <div className="max-w-md px-4 py-2 rounded-lg bg-accent text-accent-foreground text-center">
-                              <p className="text-sm font-medium">
-                                {neg.from_profile?.name || 'User'} {neg.action === 'counter' ? 'offered' : neg.action === 'accept' ? 'accepted' : 'declined'} 
-                                {neg.amount ? ` $${neg.amount}` : ''}
-                              </p>
-                              {neg.message && (
-                                <p className="text-xs mt-1 opacity-80">{neg.message}</p>
-                              )}
-                              <p className="text-xs mt-1 opacity-60">
-                                {formatDistanceToNow(new Date(neg.created_at))} ago
-                              </p>
-                            </div>
-                          </div>
-                        ))}
-                        
-                        {/* Display chat messages */}
-                        {messages?.map((message) => (
-                          <div
-                            key={message.id}
-                            className={`flex ${
-                              message.from_user_id === user?.id ? 'justify-end' : 'justify-start'
-                            }`}
-                          >
-                            <div
-                              className={`max-w-sm px-4 py-2 rounded-lg ${
-                                message.from_user_id === user?.id
-                                  ? 'bg-primary text-primary-foreground'
-                                  : 'bg-muted'
-                              }`}
-                            >
-                              <p>{message.message_text}</p>
-                              <p className={`text-xs mt-1 ${
-                                message.from_user_id === user?.id
-                                  ? 'text-primary-foreground/70'
-                                  : 'text-muted-foreground'
-                              }`}>
-                                {formatDistanceToNow(new Date(message.created_at))} ago
-                              </p>
-                            </div>
-                          </div>
-                        ))}
-                      </>
-                    )}
+                    ))}
                   </div>
                 </ScrollArea>
               </CardContent>
