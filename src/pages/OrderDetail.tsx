@@ -9,9 +9,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { formatDistanceToNow } from 'date-fns';
-import { Check, X, MessageSquare, Package, CreditCard, QrCode, Scan, Clock, CheckCircle2, DollarSign, Shield } from 'lucide-react';
+import { Check, X, MessageSquare, Package, CreditCard, QrCode, Scan, Clock, CheckCircle2, DollarSign, Shield, Star, User } from 'lucide-react';
 import { QRCodeDisplay } from '@/components/qr/QRCodeDisplay';
 import { QRScanner } from '@/components/qr/QRScanner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -32,6 +33,10 @@ const OrderDetail = () => {
   const [isPaymentLoading, setIsPaymentLoading] = useState(false);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<'stripe' | 'cod'>('stripe');
   const [showPaymentMethodDialog, setShowPaymentMethodDialog] = useState(false);
+  const [showRatingDialog, setShowRatingDialog] = useState(false);
+  const [rating, setRating] = useState(5);
+  const [reviewComment, setReviewComment] = useState('');
+  const [ratingFor, setRatingFor] = useState<'buyer' | 'seller' | null>(null);
 
   const { data: order, isLoading } = useQuery({
     queryKey: ['order', id],
@@ -100,6 +105,21 @@ const OrderDetail = () => {
     enabled: !!id
   });
 
+  // Fetch existing reviews for this order
+  const { data: existingReviews } = useQuery({
+    queryKey: ['order-reviews', id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('reviews')
+        .select('*')
+        .eq('order_id', id);
+      
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!id
+  });
+
   const updateOrderMutation = useMutation({
     mutationFn: async (updates: any) => {
       const { error } = await supabase
@@ -126,6 +146,67 @@ const OrderDetail = () => {
       setCounterOffer('');
     }
   });
+
+  // Submit review mutation
+  const submitReviewMutation = useMutation({
+    mutationFn: async (reviewData: any) => {
+      const { error } = await supabase
+        .from('reviews')
+        .insert([reviewData]);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast({
+        title: 'Review submitted!',
+        description: 'Thank you for your feedback.'
+      });
+      setShowRatingDialog(false);
+      setRating(5);
+      setReviewComment('');
+      setRatingFor(null);
+      queryClient.invalidateQueries({ queryKey: ['order-reviews', id] });
+      queryClient.invalidateQueries({ queryKey: ['user-reviews'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Failed to submit review',
+        description: error.message,
+        variant: 'destructive'
+      });
+    }
+  });
+
+  // Check if user can rate the other party
+  const canRateSeller = isBuyer && order?.status === 'completed' && 
+    !existingReviews?.some(review => review.reviewer_id === user?.id && review.reviewed_user_id === order.seller_id);
+
+  const canRateBuyer = isSeller && order?.status === 'completed' && 
+    !existingReviews?.some(review => review.reviewer_id === user?.id && review.reviewed_user_id === order.buyer_id);
+
+  const handleRateSeller = () => {
+    setRatingFor('seller');
+    setShowRatingDialog(true);
+  };
+
+  const handleRateBuyer = () => {
+    setRatingFor('buyer');
+    setShowRatingDialog(true);
+  };
+
+  const handleSubmitReview = async () => {
+    if (!ratingFor || !user?.id || !order) return;
+
+    const reviewedUserId = ratingFor === 'seller' ? order.seller_id : order.buyer_id;
+    
+    await submitReviewMutation.mutateAsync({
+      order_id: id,
+      reviewer_id: user.id,
+      reviewed_user_id: reviewedUserId,
+      listing_id: order.listing_id,
+      rating: rating,
+      comment: reviewComment || null
+    });
+  };
 
   // Handle COD payment confirmation
   const confirmCODPayment = async () => {
@@ -504,8 +585,14 @@ const OrderDetail = () => {
               <div>
                 <p className="text-sm font-medium mb-2">Buyer</p>
                  <div className="flex items-center gap-2">
-                   <Package className="h-5 w-5 text-muted-foreground" />
+                   <User className="h-5 w-5 text-muted-foreground" />
                    <span className="truncate">{(order as any).buyer_profile?.name || 'N/A'}</span>
+                   {canRateBuyer && (
+                     <Button size="sm" variant="outline" onClick={handleRateBuyer} className="ml-auto">
+                       <Star className="h-3 w-3 mr-1" />
+                       Rate
+                     </Button>
+                   )}
                  </div>
               </div>
 
@@ -514,8 +601,14 @@ const OrderDetail = () => {
               <div>
                 <p className="text-sm font-medium mb-2">Seller</p>
                  <div className="flex items-center gap-2">
-                   <Package className="h-5 w-5 text-muted-foreground" />
+                   <User className="h-5 w-5 text-muted-foreground" />
                    <span className="truncate">{(order as any).seller_profile?.name || 'N/A'}</span>
+                   {canRateSeller && (
+                     <Button size="sm" variant="outline" onClick={handleRateSeller} className="ml-auto">
+                       <Star className="h-3 w-3 mr-1" />
+                       Rate
+                     </Button>
+                   )}
                  </div>
               </div>
 
@@ -536,6 +629,91 @@ const OrderDetail = () => {
             </CardContent>
           </Card>
         </div>
+
+        {/* Rating Section - Show existing reviews */}
+        {existingReviews && existingReviews.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Reviews for this Order</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {existingReviews.map((review) => (
+                  <div key={review.id} className="border rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <User className="h-4 w-4 text-muted-foreground" />
+                        <span className="font-medium">
+                          {review.reviewer_id === user?.id ? 'You' : 'User'} rated {review.reviewed_user_id === order.seller_id ? 'Seller' : 'Buyer'}
+                        </span>
+                      </div>
+                      <div className="flex items-center">
+                        {[...Array(5)].map((_, i) => (
+                          <Star
+                            key={i}
+                            className={`h-4 w-4 ${
+                              i < review.rating
+                                ? 'fill-current text-yellow-400'
+                                : 'text-gray-300'
+                            }`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    {review.comment && (
+                      <p className="text-sm text-muted-foreground mt-2">{review.comment}</p>
+                    )}
+                    <p className="text-xs text-muted-foreground mt-2">
+                      {formatDistanceToNow(new Date(review.created_at))} ago
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Rate Seller Card */}
+        {canRateSeller && (
+          <Card className="border-primary">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Star className="h-5 w-5 text-yellow-500" />
+                Rate the Seller
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-4">
+                How was your experience with {(order as any).seller_profile?.name || 'the seller'}?
+              </p>
+              <Button onClick={handleRateSeller} className="w-full">
+                <Star className="h-4 w-4 mr-2" />
+                Leave a Review
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Rate Buyer Card */}
+        {canRateBuyer && (
+          <Card className="border-primary">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Star className="h-5 w-5 text-yellow-500" />
+                Rate the Buyer
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-4">
+                How was your experience with {(order as any).buyer_profile?.name || 'the buyer'}?
+              </p>
+              <Button onClick={handleRateBuyer} className="w-full">
+                <Star className="h-4 w-4 mr-2" />
+                Leave a Review
+              </Button>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Negotiations */}
         {negotiations && negotiations.length > 0 && (
@@ -1037,6 +1215,83 @@ const OrderDetail = () => {
                 className="flex-1 bg-green-600 hover:bg-green-700"
               >
                 {isPaymentLoading ? 'Confirming...' : 'Confirm COD Order'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rating Dialog */}
+      <Dialog open={showRatingDialog} onOpenChange={setShowRatingDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Rate {ratingFor === 'seller' ? (order as any).seller_profile?.name || 'the Seller' : (order as any).buyer_profile?.name || 'the Buyer'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-6">
+            <div className="text-center">
+              <p className="text-sm text-muted-foreground mb-4">
+                How was your experience with {ratingFor === 'seller' ? 'the seller' : 'the buyer'}?
+              </p>
+              
+              <div className="flex justify-center gap-2 mb-2">
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <button
+                    key={star}
+                    type="button"
+                    onClick={() => setRating(star)}
+                    className="text-3xl focus:outline-none"
+                  >
+                    <Star
+                      className={`${
+                        star <= rating
+                          ? 'fill-current text-yellow-400'
+                          : 'text-gray-300'
+                      }`}
+                    />
+                  </button>
+                ))}
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {rating === 1 && 'Poor'}
+                {rating === 2 && 'Fair'}
+                {rating === 3 && 'Good'}
+                {rating === 4 && 'Very Good'}
+                {rating === 5 && 'Excellent'}
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <Label htmlFor="review-comment">Optional Comment</Label>
+              <Textarea
+                id="review-comment"
+                placeholder="Share your experience (optional)"
+                value={reviewComment}
+                onChange={(e) => setReviewComment(e.target.value)}
+                rows={3}
+              />
+            </div>
+
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowRatingDialog(false);
+                  setRating(5);
+                  setReviewComment('');
+                  setRatingFor(null);
+                }}
+                className="flex-1"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSubmitReview}
+                disabled={submitReviewMutation.isPending}
+                className="flex-1"
+              >
+                {submitReviewMutation.isPending ? 'Submitting...' : 'Submit Review'}
               </Button>
             </div>
           </div>
