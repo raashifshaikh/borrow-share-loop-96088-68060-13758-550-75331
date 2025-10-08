@@ -22,54 +22,83 @@ const Browse = () => {
   const { data: categories } = useQuery({
     queryKey: ['categories'],
     queryFn: async () => {
-      const { data } = await supabase.from('categories').select('*').order('name');
+      const { data } = await supabase.from('categories').select('*');
       return data || [];
     }
   });
 
   const { data: listings, isLoading } = useQuery({
-    queryKey: ['listings', searchTerm, selectedType, selectedCategory, sortBy],
+    queryKey: ['listings', searchTerm, selectedCategory, sortBy],
     queryFn: async () => {
       let query = supabase
         .from('listings')
         .select(`
           *,
-          categories (name, type)
+          categories (name)
         `)
         .eq('status', 'active');
 
-      // Search filter
       if (searchTerm) {
         query = query.or(`title.ilike.%${searchTerm}%,description.ilike.%${searchTerm}%`);
       }
 
-      // Type filter (item/service)
-      if (selectedType !== 'all') {
-        query = query.eq('type', selectedType);
-      }
-
-      // Category filter
       if (selectedCategory !== 'all') {
         query = query.eq('category_id', selectedCategory);
       }
 
-      // Sorting
-      query = query.order(sortBy, { ascending: sortBy === 'price' });
+      query = query.order(sortBy, { ascending: false });
 
       const { data } = await query;
       return data || [];
     }
   });
 
-  // Filter categories based on selected type
-  const filteredCategories = categories?.filter(category => {
-    if (selectedType === 'all') return true;
-    return category.type === selectedType;
-  });
+  // Categorize listings based on category name or other criteria
+  const categorizeListings = (listings: any[]) => {
+    const items = listings?.filter(listing => {
+      // If you have a specific way to identify items vs services, use that here
+      // For now, I'll use a simple heuristic based on category name or description
+      const categoryName = listing.categories?.name?.toLowerCase() || '';
+      const title = listing.title?.toLowerCase() || '';
+      const description = listing.description?.toLowerCase() || '';
+      
+      // Common service keywords
+      const serviceKeywords = ['service', 'repair', 'maintenance', 'consult', 'tutor', 'teach', 'help', 'assist'];
+      
+      const isService = serviceKeywords.some(keyword => 
+        categoryName.includes(keyword) || 
+        title.includes(keyword) || 
+        description.includes(keyword)
+      );
+      
+      return !isService;
+    }) || [];
 
-  // Group listings by type for the tab view
-  const items = listings?.filter(listing => listing.type === 'item') || [];
-  const services = listings?.filter(listing => listing.type === 'service') || [];
+    const services = listings?.filter(listing => {
+      const categoryName = listing.categories?.name?.toLowerCase() || '';
+      const title = listing.title?.toLowerCase() || '';
+      const description = listing.description?.toLowerCase() || '';
+      
+      const serviceKeywords = ['service', 'repair', 'maintenance', 'consult', 'tutor', 'teach', 'help', 'assist'];
+      
+      return serviceKeywords.some(keyword => 
+        categoryName.includes(keyword) || 
+        title.includes(keyword) || 
+        description.includes(keyword)
+      );
+    }) || [];
+
+    return { items, services };
+  };
+
+  const { items, services } = categorizeListings(listings || []);
+
+  // Filter listings based on selected type
+  const filteredListings = selectedType === 'all' 
+    ? listings 
+    : selectedType === 'item' 
+      ? items 
+      : services;
 
   const renderListingCard = (listing: any) => (
     <Card key={listing.id} className="group hover:shadow-lg transition-shadow h-full flex flex-col">
@@ -92,11 +121,12 @@ const Browse = () => {
         >
           <Heart className="h-4 w-4" />
         </Button>
+        {/* Dynamic badge based on categorization */}
         <Badge 
           className="absolute top-2 left-2 capitalize"
-          variant={listing.type === 'item' ? 'default' : 'secondary'}
+          variant={items.includes(listing) ? 'default' : 'secondary'}
         >
-          {listing.type}
+          {items.includes(listing) ? 'item' : 'service'}
         </Badge>
       </div>
       
@@ -130,8 +160,8 @@ const Browse = () => {
       
       <CardFooter className="pt-4">
         <Link to={`/listing/${listing.id}`} className="w-full">
-          <Button className="w-full" variant={listing.type === 'service' ? 'default' : 'outline'}>
-            {listing.type === 'service' ? 'Book Service' : 'View Details'}
+          <Button className="w-full" variant={services.includes(listing) ? 'default' : 'outline'}>
+            {services.includes(listing) ? 'Book Service' : 'View Details'}
           </Button>
         </Link>
       </CardFooter>
@@ -158,10 +188,8 @@ const Browse = () => {
             />
           </div>
           
-          <Select value={selectedType} onValueChange={(value: ListingType) => {
-            setSelectedType(value);
-            setSelectedCategory('all'); // Reset category when type changes
-          }}>
+          {/* Type Filter */}
+          <Select value={selectedType} onValueChange={(value: ListingType) => setSelectedType(value)}>
             <SelectTrigger className="w-40">
               <SelectValue placeholder="Type" />
             </SelectTrigger>
@@ -179,7 +207,7 @@ const Browse = () => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Categories</SelectItem>
-              {filteredCategories?.map((category) => (
+              {categories?.map((category) => (
                 <SelectItem key={category.id} value={category.id}>
                   {category.name}
                 </SelectItem>
@@ -233,13 +261,13 @@ const Browse = () => {
             </TabsList>
 
             <TabsContent value="all" className="space-y-6">
-              {listings?.length === 0 ? (
+              {filteredListings?.length === 0 ? (
                 <div className="text-center py-12">
                   <p className="text-muted-foreground">No listings found matching your search.</p>
                 </div>
               ) : (
                 <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-                  {listings?.map(renderListingCard)}
+                  {filteredListings?.map(renderListingCard)}
                 </div>
               )}
             </TabsContent>
