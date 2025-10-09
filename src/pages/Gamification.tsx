@@ -147,7 +147,8 @@ const Gamification = () => {
     progressToNextLevel, 
     nextLevelXP,
     userStats,
-    streakDays
+    streakDays,
+    leaderboardData
   } = useGamification();
 
   const [activeCategory, setActiveCategory] = useState('all');
@@ -194,19 +195,8 @@ const Gamification = () => {
     new Date(b.earned_at).getTime() - new Date(a.earned_at).getTime()
   ).slice(0, 3);
 
-  const leaderboardData = [
-    { id: '1', name: 'Alex Johnson', level: 15, xp: 12500, position: 1, change: '+2' },
-    { id: '2', name: 'Sarah Miller', level: 14, xp: 11800, position: 2, change: '-1' },
-    { id: '3', name: 'Mike Chen', level: 13, xp: 11200, position: 3, change: '+1' },
-    ...(user ? [{ 
-      id: user.id, 
-      name: user.name || 'You', 
-      level: userLevel?.level || 1, 
-      xp: userLevel?.xp || 0, 
-      position: 25,
-      change: '+5'
-    }] : [])
-  ];
+  // Find current user's position in leaderboard
+  const currentUserRank = leaderboardData?.find(u => u.id === user?.id)?.position || 'N/A';
 
   const handleBadgeClick = (badge: any) => {
     const userBadge = userBadges?.find(ub => ub.badge_id === badge.id);
@@ -372,7 +362,7 @@ const Gamification = () => {
                     { value: earnedBadges.length, label: 'Badges', color: 'text-purple-600' },
                     { value: userStats?.completed_orders || 0, label: 'Transactions', color: 'text-blue-600' },
                     { value: totalXP.toLocaleString(), label: 'Total XP', color: 'text-green-600' },
-                    { value: leaderboardData.find(u => u.id === user.id)?.position || 'N/A', label: 'Rank', color: 'text-orange-600' },
+                    { value: currentUserRank, label: 'Rank', color: 'text-orange-600' },
                   ].map((stat, index) => (
                     <motion.div
                       key={stat.label}
@@ -490,11 +480,78 @@ const Gamification = () => {
               </Card>
             </TabsContent>
 
-            {/* Other tabs remain similar but with motion wrappers */}
-            <TabsContent value="achievements">
-              {/* Add your achievements content here */}
+            {/* Leaderboard Tab */}
+            <TabsContent value="leaderboard">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Community Leaderboard</CardTitle>
+                  <CardDescription>
+                    See how you rank against other BorrowPal users
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Leaderboard data={leaderboardData || []} currentUserId={user.id} />
+                </CardContent>
+              </Card>
             </TabsContent>
 
+            {/* Challenges Tab */}
+            <TabsContent value="challenges">
+              <WeeklyChallenges userId={user.id} />
+            </TabsContent>
+
+            {/* Referrals Tab */}
+            <TabsContent value="referrals">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Referral Program</CardTitle>
+                  <CardDescription>
+                    Invite friends and earn rewards together!
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="font-semibold">Your Referral Code</h3>
+                        <p className="text-sm text-muted-foreground">
+                          Share this code with friends to earn XP and badges
+                        </p>
+                      </div>
+                      <Badge variant="secondary" className="text-lg font-mono">
+                        {user.referral_code || 'BORROW100'}
+                      </Badge>
+                    </div>
+                    <Separator />
+                    <div className="grid grid-cols-3 gap-4 text-center">
+                      <div>
+                        <div className="text-2xl font-bold text-purple-600">
+                          {userStats?.referral_count || 0}
+                        </div>
+                        <div className="text-sm text-muted-foreground">Referred</div>
+                      </div>
+                      <div>
+                        <div className="text-2xl font-bold text-green-600">
+                          +{(userStats?.referral_count || 0) * 100} XP
+                        </div>
+                        <div className="text-sm text-muted-foreground">XP Earned</div>
+                      </div>
+                      <div>
+                        <div className="text-2xl font-bold text-blue-600">
+                          {earnedBadges.filter(b => b.badges?.category === 'viral').length}
+                        </div>
+                        <div className="text-sm text-muted-foreground">Referral Badges</div>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Achievements Tab */}
+            <TabsContent value="achievements">
+              <AchievementTracker userId={user.id} />
+            </TabsContent>
           </Tabs>
         </div>
       </div>
