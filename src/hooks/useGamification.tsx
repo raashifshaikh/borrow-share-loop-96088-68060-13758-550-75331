@@ -78,6 +78,75 @@ export const useGamification = () => {
     enabled: !!user?.id,
   });
 
+  // Fetch user statistics from orders and activities
+  const { data: userStats } = useQuery({
+    queryKey: ['user-stats', user?.id],
+    queryFn: async () => {
+      if (!user?.id) return null;
+
+      // Get completed orders count
+      const { data: orders, error: ordersError } = await supabase
+        .from('orders')
+        .select('status')
+        .or(`buyer_id.eq.${user.id},seller_id.eq.${user.id}`);
+
+      if (ordersError) throw ordersError;
+
+      const completedOrders = orders?.filter(order => 
+        order.status === 'completed' || order.status === 'delivered'
+      ).length || 0;
+
+      // Get user profile for streak data
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('streak_days, trust_score')
+        .eq('id', user.id)
+        .single();
+
+      if (profileError && profileError.code !== 'PGRST116') throw profileError;
+
+      return {
+        completed_orders: completedOrders,
+        total_orders: orders?.length || 0,
+        streak_days: profile?.streak_days || 0,
+        trust_score: profile?.trust_score || 50,
+      };
+    },
+    enabled: !!user?.id,
+  });
+
+  // Fetch leaderboard data
+  const { data: leaderboardData = [] } = useQuery({
+    queryKey: ['leaderboard'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('user_levels')
+        .select(`
+          level,
+          xp,
+          profiles!inner (
+            id,
+            name,
+            avatar_url
+          )
+        `)
+        .order('xp', { ascending: false })
+        .limit(50);
+
+      if (error) throw error;
+
+      return data.map((item, index) => ({
+        id: item.profiles.id,
+        name: item.profiles.name,
+        avatar_url: item.profiles.avatar_url,
+        level: item.level,
+        xp: item.xp,
+        position: index + 1,
+        change: '+0' // You'd need historical data for real change values
+      }));
+    },
+  });
+
   // Award XP mutation
   const awardXP = useMutation({
     mutationFn: async (xpAmount: number) => {
@@ -115,10 +184,13 @@ export const useGamification = () => {
     userBadges,
     allBadges,
     referrals,
+    userStats,
+    leaderboardData,
     levelLoading,
     badgesLoading,
     awardXP: awardXP.mutate,
     progressToNextLevel,
     nextLevelXP: userLevel ? getNextLevelXP(userLevel.level) : 0,
+    streakDays: userStats?.streak_days || 0,
   };
 };
