@@ -19,7 +19,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { Upload, X, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, Save, MapPin, Navigation, DollarSign } from 'lucide-react';
 
-// Types & Schema
+// Types & Schema - Updated to match your database enums
 const addressSchema = z.object({
   street: z.string().min(1, "Street address is required"),
   area: z.string().min(1, "Area is required"),
@@ -38,19 +38,11 @@ const listingFormSchema = z.object({
   type: z.enum(['item', 'service']),
   category_id: z.string().min(1, "Category is required"),
   condition: z.enum(['new', 'like_new', 'good', 'fair', 'poor']),
-  price: z.number().min(0, "Price must be positive").optional(),
+  price: z.number().min(0, "Price must be positive"),
   price_type: z.enum(['fixed', 'hourly', 'per_day', 'negotiable']),
   delivery_options: z.array(z.enum(['pickup', 'delivery', 'both'])).min(1, "Select at least one delivery option"),
   images: z.array(z.string()).min(1, "At least one image is required").max(10, "Maximum 10 images allowed"),
   address: addressSchema.optional(),
-}).refine((data) => {
-  if (data.type === 'item' && (!data.price || data.price <= 0)) {
-    return false;
-  }
-  return true;
-}, {
-  message: "Price is required for items",
-  path: ["price"],
 });
 
 type ListingFormValues = z.infer<typeof listingFormSchema>;
@@ -65,7 +57,6 @@ const compressImage = (file: File): Promise<File> => {
     img.onload = () => {
       let { width, height } = img;
 
-      // Mobile-optimized compression
       const maxWidth = window.innerWidth > 768 ? 1920 : 1200;
       const maxHeight = window.innerWidth > 768 ? 1080 : 800;
 
@@ -906,31 +897,34 @@ const CreateListingWizard = () => {
     setSubmissionLoading(true);
 
     try {
-      // Fix: Use proper Supabase insert without columns parameter
+      // Map the form data to your database structure
+      const listingData = {
+        title: formData.title,
+        description: formData.description,
+        type: formData.type,
+        category_id: formData.category_id,
+        condition: formData.condition,
+        price: formData.price,
+        price_type: formData.price_type,
+        delivery_options: formData.delivery_options,
+        seller_id: user.id,
+        address: formData.address,
+        images: formData.images,
+        status: 'active',
+        currency: 'USD',
+      };
+
+      console.log('Submitting listing data:', listingData);
+
       const { data: listing, error: listingError } = await supabase
         .from('listings')
-        .insert({
-          title: formData.title,
-          description: formData.description,
-          type: formData.type,
-          category_id: formData.category_id,
-          condition: formData.type === 'service' ? null : formData.condition,
-          price: formData.price,
-          price_type: formData.price_type,
-          delivery_options: Array.isArray(formData.delivery_options) 
-            ? formData.delivery_options 
-            : [formData.delivery_options],
-          seller_id: user.id,
-          address: formData.address,
-          status: 'active',
-          images: formData.images,
-        })
+        .insert(listingData)
         .select()
         .single();
 
       if (listingError) {
-        console.error('Supabase error:', listingError);
-        throw new Error(listingError.message || 'Failed to create listing');
+        console.error('Supabase error details:', listingError);
+        throw new Error(listingError.details || listingError.message || 'Failed to create listing');
       }
 
       toast({
@@ -963,7 +957,7 @@ const CreateListingWizard = () => {
 
       toast({
         title: "Failed to create listing",
-        description: error.message || "Please try again",
+        description: error.message || "Please check your input and try again",
         variant: "destructive"
       });
 
