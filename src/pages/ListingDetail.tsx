@@ -15,6 +15,29 @@ import { useToast } from '@/hooks/use-toast';
 import { Heart, MapPin, Star, MessageSquare, Calendar, Package } from 'lucide-react';
 import { NegotiationDialog } from '@/components/NegotiationDialog';
 
+// Currency configuration
+const CURRENCY_CONFIG = {
+  USD: { symbol: '$', decimalDigits: 2 },
+  INR: { symbol: '₹', decimalDigits: 2 },
+  PKR: { symbol: 'Rs', decimalDigits: 0 }
+} as const;
+
+type Currency = keyof typeof CURRENCY_CONFIG;
+
+const formatCurrency = (amount: number, currency: Currency = 'USD'): string => {
+  const config = CURRENCY_CONFIG[currency];
+  
+  if (currency === 'PKR') {
+    return `${config.symbol} ${Math.round(amount).toLocaleString()}`;
+  }
+  
+  return `${config.symbol}${amount.toFixed(config.decimalDigits)}`;
+};
+
+const getCurrencySymbol = (currency: Currency): string => {
+  return CURRENCY_CONFIG[currency].symbol;
+};
+
 const ListingDetail = () => {
   const { id } = useParams();
   const { user } = useAuth();
@@ -56,6 +79,23 @@ const ListingDetail = () => {
     },
     enabled: !!listing?.seller_id
   });
+
+  const { data: userPreferences } = useQuery({
+    queryKey: ['user-preferences', user?.id],
+    queryFn: async () => {
+      if (!user?.id) return null;
+      const { data } = await supabase
+        .from('profile_preferences')
+        .select('*')
+        .eq('user_id', user.id)
+        .single();
+      return data;
+    },
+    enabled: !!user?.id
+  });
+
+  // Get display currency (user preference or listing currency)
+  const displayCurrency = (userPreferences?.preferred_currency as Currency) || listing?.currency || 'USD';
 
   const createOrderMutation = useMutation({
     mutationFn: async (orderData: any) => {
@@ -125,7 +165,8 @@ const ListingDetail = () => {
       final_amount: listing.price * quantity,
       quantity,
       notes,
-      status: 'pending'
+      status: 'pending',
+      currency: listing.currency || 'USD'
     };
 
     createOrderMutation.mutate(orderData);
@@ -154,6 +195,7 @@ const ListingDetail = () => {
 
   const avgRating = reviews?.length ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length : 0;
   const isOwner = user?.id === listing.seller_id;
+  const listingCurrency = listing.currency as Currency || 'USD';
 
   // Helper: Build chat link for this listing and seller
   const chatLink = `/messages?seller=${listing.seller_id}&listing=${listing.id}`;
@@ -161,6 +203,29 @@ const ListingDetail = () => {
   return (
     <DashboardLayout>
       <div className="max-w-6xl mx-auto space-y-6">
+        {/* Currency Display Banner */}
+        {displayCurrency !== listingCurrency && (
+          <Card className="border-blue-200 bg-blue-50">
+            <CardContent className="py-3">
+              <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-blue-700">
+                    Displaying prices in {displayCurrency} {CURRENCY_CONFIG[displayCurrency].symbol}
+                  </span>
+                  <Badge variant="outline" className="text-xs">
+                    Original: {listingCurrency}
+                  </Badge>
+                </div>
+                <Link to="/settings">
+                  <Button variant="ghost" size="sm" className="text-blue-700 hover:text-blue-800">
+                    Change Currency
+                  </Button>
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <div className="grid md:grid-cols-2 gap-6">
           {/* Images */}
           <div className="space-y-4">
@@ -217,13 +282,27 @@ const ListingDetail = () => {
                 {listing.condition && (
                   <Badge variant="outline">{listing.condition}</Badge>
                 )}
+                {listing.currency && (
+                  <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                    {listing.currency}
+                  </Badge>
+                )}
               </div>
             </div>
 
             <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-bold text-primary">${listing.price}</span>
+              <span className="text-4xl font-bold text-primary">
+                {formatCurrency(listing.price, listingCurrency)}
+              </span>
               <span className="text-lg text-muted-foreground">/ {listing.price_type}</span>
             </div>
+
+            {/* Converted Price Display */}
+            {displayCurrency !== listingCurrency && (
+              <div className="text-sm text-muted-foreground">
+                ≈ {formatCurrency(listing.price, displayCurrency)} in {displayCurrency}
+              </div>
+            )}
 
             <div className="space-y-2">
               <h3 className="font-semibold">Description</h3>
@@ -302,10 +381,24 @@ const ListingDetail = () => {
                     />
                   </div>
                   <div className="flex items-center justify-between py-4 border-t">
-                    <span className="text-lg font-medium">Total:</span>
-                    <span className="text-2xl font-bold text-primary">
-                      ${(listing.price * quantity).toFixed(2)}
-                    </span>
+                    <div>
+                      <span className="text-lg font-medium">Total:</span>
+                      {displayCurrency !== listingCurrency && (
+                        <div className="text-sm text-muted-foreground">
+                          in {listingCurrency}
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <span className="text-2xl font-bold text-primary">
+                        {formatCurrency(listing.price * quantity, listingCurrency)}
+                      </span>
+                      {displayCurrency !== listingCurrency && (
+                        <div className="text-sm text-muted-foreground">
+                          ≈ {formatCurrency(listing.price * quantity, displayCurrency)}
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <Button
                     className="w-full"
@@ -315,6 +408,9 @@ const ListingDetail = () => {
                   >
                     {listing.price_type === 'negotiable' ? 'Make Offer' : 'Place Order'}
                   </Button>
+                  <div className="text-xs text-center text-muted-foreground">
+                    Payment will be processed in {listingCurrency}
+                  </div>
                 </CardContent>
               </Card>
             ) : (
