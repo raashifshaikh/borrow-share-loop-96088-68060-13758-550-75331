@@ -9,7 +9,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Slider } from '@/components/ui/slider';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { Search, Filter, Heart, MapPin, Package, Wrench, Star, Clock, Truck, Shield, Eye } from 'lucide-react';
+import { Search, Filter, Heart, MapPin, Package, Wrench, Star, Truck, Eye, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { debounce } from 'lodash';
 
@@ -23,6 +23,7 @@ const Browse = () => {
   const [sortBy, setSortBy] = useState('created_at');
   const [priceRange, setPriceRange] = useState([0, 1000]);
   const [deliveryFilter, setDeliveryFilter] = useState('all');
+  const [showFilters, setShowFilters] = useState(false);
 
   // Debounced search for better performance
   const debouncedSearch = useCallback(
@@ -44,16 +45,21 @@ const Browse = () => {
     }
   });
 
-  const { data: listings, isLoading } = useQuery({
+  // Fixed database query - simplified to avoid relationship issues
+  const { data: listings, isLoading, error } = useQuery({
     queryKey: ['listings', searchTerm, selectedCategory, sortBy, locationFilter, priceRange, deliveryFilter],
     queryFn: async () => {
+      console.log('Fetching listings with filters:', {
+        searchTerm,
+        selectedCategory,
+        locationFilter,
+        priceRange,
+        deliveryFilter
+      });
+
       let query = supabase
         .from('listings')
-        .select(`
-          *,
-          categories (name, icon),
-          profiles:seller_id (username, avatar_url, rating)
-        `)
+        .select('*')
         .eq('status', 'active');
 
       // Text search
@@ -71,14 +77,19 @@ const Browse = () => {
         query = query.gte('price', priceRange[0]).lte('price', priceRange[1]);
       }
 
-      // Location filter
+      // Location filter - handle both address and location columns
       if (locationFilter) {
-        query = query.ilike('address->>city', `%${locationFilter}%`);
+        query = query.or(`address->>city.ilike.%${locationFilter}%,location->>city.ilike.%${locationFilter}%`);
       }
 
       // Delivery options filter
       if (deliveryFilter !== 'all') {
         query = query.contains('delivery_options', [deliveryFilter]);
+      }
+
+      // Type filter
+      if (selectedType !== 'all') {
+        query = query.eq('type', selectedType);
       }
 
       // Sorting
@@ -92,33 +103,38 @@ const Browse = () => {
         case 'popular':
           query = query.order('views_count', { ascending: false });
           break;
-        case 'rating':
-          query = query.order('profiles(rating)', { ascending: false });
-          break;
         default:
           query = query.order('created_at', { ascending: false });
       }
 
-      const { data, error } = await query;
-      if (error) {
-        console.error('Error fetching listings:', error);
-        return [];
+      const { data, error: queryError } = await query;
+      
+      if (queryError) {
+        console.error('Error fetching listings:', queryError);
+        throw queryError;
       }
+
+      console.log('Fetched listings:', data?.length);
       return data || [];
+    },
+    retry: 1
+  });
+
+  // Get category names for display
+  const { data: categoryMap } = useQuery({
+    queryKey: ['category-map'],
+    queryFn: async () => {
+      const { data } = await supabase.from('categories').select('id, name');
+      const map = new Map();
+      data?.forEach(cat => map.set(cat.id, cat.name));
+      return map;
     }
   });
 
   // Enhanced categorization with better logic
   const categorizeListings = useCallback((listings: any[]) => {
-    const items = listings?.filter(listing => {
-      // Use the actual type field from database
-      return listing.type === 'item';
-    }) || [];
-
-    const services = listings?.filter(listing => {
-      return listing.type === 'service';
-    }) || [];
-
+    const items = listings?.filter(listing => listing.type === 'item') || [];
+    const services = listings?.filter(listing => listing.type === 'service') || [];
     return { items, services };
   }, []);
 
@@ -146,6 +162,9 @@ const Browse = () => {
   };
 
   const getDeliveryBadge = (deliveryOptions: string[]) => {
+    if (!deliveryOptions || !Array.isArray(deliveryOptions)) {
+      return { text: 'Pickup Only', color: 'bg-gray-100 text-gray-800 border-gray-200' };
+    }
     if (deliveryOptions.includes('both')) {
       return { text: 'Pickup & Delivery', color: 'bg-purple-100 text-purple-800 border-purple-200' };
     }
@@ -155,14 +174,31 @@ const Browse = () => {
     return { text: 'Pickup Only', color: 'bg-gray-100 text-gray-800 border-gray-200' };
   };
 
+  const getLocationInfo = (listing: any) => {
+    // Handle both address and location columns
+    const location = listing.address || listing.location;
+    if (!location) return null;
+    
+    if (typeof location === 'object') {
+      return {
+        city: location.city,
+        state: location.state,
+        area: location.area
+      };
+    }
+    return null;
+  };
+
   const renderListingCard = (listing: any) => {
-    const deliveryBadge = getDeliveryBadge(listing.delivery_options || ['pickup']);
+    const deliveryBadge = getDeliveryBadge(listing.delivery_options);
     const conditionBadge = listing.condition ? getConditionColor(listing.condition) : '';
+    const locationInfo = getLocationInfo(listing);
+    const categoryName = categoryMap?.get(listing.category_id);
     
     return (
       <Card 
         key={listing.id} 
-        className="group hover:shadow-xl transition-all duration-300 hover:-translate-y-1 h-full flex flex-col border border-gray-200/50 bg-white/50 backdrop-blur-sm"
+        className="group hover:shadow-lg transition-all duration-300 hover:-translate-y-1 h-full flex flex-col border border-gray-200"
       >
         <div className="relative overflow-hidden rounded-t-lg">
           {listing.images?.[0] ? (
@@ -172,10 +208,10 @@ const Browse = () => {
                 alt={listing.title}
                 className="w-full h-48 object-cover transition-transform duration-500 group-hover:scale-105"
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent" />
             </div>
           ) : (
-            <div className="w-full h-48 bg-gradient-to-br from-gray-100 to-gray-200 rounded-t-lg flex items-center justify-center">
+            <div className="w-full h-48 bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center">
               <Package className="h-12 w-12 text-gray-400" />
             </div>
           )}
@@ -183,7 +219,7 @@ const Browse = () => {
           <Button
             variant="ghost"
             size="icon"
-            className="absolute top-3 right-3 bg-white/90 hover:bg-white backdrop-blur-sm shadow-lg hover:scale-110 transition-all duration-200"
+            className="absolute top-2 right-2 bg-white/90 hover:bg-white shadow-sm hover:scale-110 transition-all duration-200 h-8 w-8"
           >
             <Heart className="h-4 w-4" />
           </Button>
@@ -191,8 +227,7 @@ const Browse = () => {
           {/* Condition Badge */}
           {listing.condition && (
             <Badge 
-              className={`absolute top-3 left-3 capitalize border ${conditionBadge}`}
-              variant="secondary"
+              className={`absolute top-2 left-2 capitalize border text-xs ${conditionBadge}`}
             >
               {listing.condition.replace('_', ' ')}
             </Badge>
@@ -200,21 +235,20 @@ const Browse = () => {
 
           {/* Delivery Badge */}
           <Badge 
-            className={`absolute bottom-3 left-3 text-xs border ${deliveryBadge.color}`}
-            variant="secondary"
+            className={`absolute bottom-2 left-2 text-xs border ${deliveryBadge.color}`}
           >
             <Truck className="h-3 w-3 mr-1" />
             {deliveryBadge.text}
           </Badge>
         </div>
         
-        <CardHeader className="pb-3 flex-grow-0 space-y-2">
+        <CardHeader className="pb-3 flex-grow-0 space-y-2 px-4 pt-4">
           <div className="flex items-start justify-between">
-            <h3 className="font-semibold text-foreground group-hover:text-primary transition-colors line-clamp-2 text-base leading-tight">
+            <h3 className="font-semibold text-foreground group-hover:text-primary transition-colors line-clamp-2 text-sm leading-tight flex-1 mr-2">
               {listing.title}
             </h3>
-            <div className="text-right ml-2">
-              <div className="font-bold text-lg text-green-600">
+            <div className="text-right flex-shrink-0">
+              <div className="font-bold text-base text-green-600">
                 ${listing.price}
               </div>
               <div className="text-xs text-muted-foreground capitalize">
@@ -225,66 +259,57 @@ const Browse = () => {
           
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              {listing.categories?.name && (
+              {categoryName && (
                 <Badge variant="outline" className="text-xs">
-                  {listing.categories.name}
+                  {categoryName}
                 </Badge>
               )}
             </div>
             
-            {/* Seller Rating */}
-            {listing.profiles?.rating && (
-              <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                <span>{listing.profiles.rating}</span>
-              </div>
-            )}
+            <Badge 
+              variant={listing.type === 'service' ? 'secondary' : 'default'} 
+              className="text-xs capitalize"
+            >
+              {listing.type}
+            </Badge>
           </div>
         </CardHeader>
         
-        <CardContent className="pb-3 flex-grow space-y-3">
+        <CardContent className="pb-3 flex-grow space-y-3 px-4">
           <p className="text-sm text-muted-foreground line-clamp-2 leading-relaxed">
             {listing.description}
           </p>
           
           {/* Location Information */}
-          <div className="space-y-2">
-            {listing.address && (
-              <div className="flex items-start gap-2 text-xs text-muted-foreground">
-                <MapPin className="h-3 w-3 mt-0.5 flex-shrink-0" />
-                <div>
-                  <div className="font-medium text-foreground">
-                    {listing.address.city}, {listing.address.state}
-                  </div>
-                  {listing.address.area && (
-                    <div className="text-xs">{listing.address.area}</div>
-                  )}
+          {locationInfo && (
+            <div className="flex items-start gap-2 text-xs text-muted-foreground">
+              <MapPin className="h-3 w-3 mt-0.5 flex-shrink-0" />
+              <div>
+                <div className="font-medium text-foreground text-xs">
+                  {locationInfo.city}{locationInfo.state ? `, ${locationInfo.state}` : ''}
                 </div>
+                {locationInfo.area && (
+                  <div className="text-xs">{locationInfo.area}</div>
+                )}
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Stats */}
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
             {listing.views_count > 0 && (
               <div className="flex items-center gap-1">
                 <Eye className="h-3 w-3" />
-                <span>{listing.views_count} views</span>
-              </div>
-            )}
-            {listing.favorites_count > 0 && (
-              <div className="flex items-center gap-1">
-                <Heart className="h-3 w-3" />
-                <span>{listing.favorites_count} favorites</span>
+                <span>{listing.views_count}</span>
               </div>
             )}
           </div>
         </CardContent>
         
-        <CardFooter className="pt-3 border-t border-gray-100">
+        <CardFooter className="pt-3 border-t border-gray-100 px-4 pb-4">
           <Link to={`/listing/${listing.id}`} className="w-full">
             <Button 
-              className="w-full transition-all duration-200 hover:scale-105" 
+              className="w-full transition-all duration-200 hover:scale-105 text-sm" 
               variant={listing.type === 'service' ? 'default' : 'outline'}
               size="sm"
             >
@@ -297,18 +322,18 @@ const Browse = () => {
   };
 
   const LoadingSkeleton = () => (
-    <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+    <div className="grid gap-4 md:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
       {[...Array(6)].map((_, i) => (
         <Card key={i} className="animate-pulse overflow-hidden">
           <div className="h-48 bg-gradient-to-br from-gray-200 to-gray-300" />
-          <CardHeader className="space-y-3">
+          <CardHeader className="space-y-3 px-4 pt-4">
             <div className="h-4 bg-gray-200 rounded w-3/4" />
             <div className="flex justify-between">
               <div className="h-3 bg-gray-200 rounded w-1/3" />
               <div className="h-4 bg-gray-200 rounded w-1/4" />
             </div>
           </CardHeader>
-          <CardContent className="space-y-2">
+          <CardContent className="space-y-2 px-4">
             <div className="h-3 bg-gray-200 rounded w-full" />
             <div className="h-3 bg-gray-200 rounded w-2/3" />
             <div className="h-8 bg-gray-200 rounded w-full mt-4" />
@@ -318,29 +343,58 @@ const Browse = () => {
     </div>
   );
 
+  const clearFilters = () => {
+    setSearchTerm('');
+    setLocationFilter('');
+    setSelectedType('all');
+    setSelectedCategory('all');
+    setPriceRange([0, 1000]);
+    setDeliveryFilter('all');
+  };
+
+  const hasActiveFilters = searchTerm || locationFilter || selectedType !== 'all' || selectedCategory !== 'all' || priceRange[1] < 1000 || deliveryFilter !== 'all';
+
   return (
     <DashboardLayout>
-      <div className="space-y-6 animate-fade-in">
+      <div className="space-y-4 md:space-y-6 min-h-screen pb-8">
         {/* Header */}
-        <div className="text-center space-y-2">
-          <h1 className="text-4xl font-bold text-foreground bg-gradient-to-r from-primary to-purple-600 bg-clip-text text-transparent">
+        <div className="text-center space-y-2 px-4">
+          <h1 className="text-2xl md:text-4xl font-bold text-foreground">
             Discover & Share
           </h1>
-          <p className="text-muted-foreground text-lg">
-            Find amazing items to borrow or services you need in your area
+          <p className="text-muted-foreground text-sm md:text-lg">
+            Find amazing items to borrow or services you need
           </p>
         </div>
 
-        {/* Enhanced Search and Filters */}
-        <div className="space-y-4 p-6 bg-gradient-to-r from-blue-50 to-purple-50 rounded-2xl border border-blue-100/50">
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        {/* Mobile Filter Toggle */}
+        <div className="px-4 md:hidden">
+          <Button
+            variant="outline"
+            onClick={() => setShowFilters(!showFilters)}
+            className="w-full flex items-center gap-2"
+          >
+            <Filter className="h-4 w-4" />
+            {showFilters ? 'Hide Filters' : 'Show Filters'}
+            {hasActiveFilters && (
+              <Badge variant="secondary" className="ml-2 h-5 w-5 p-0 flex items-center justify-center">
+                !
+              </Badge>
+            )}
+          </Button>
+        </div>
+
+        {/* Search and Filters */}
+        <div className={`space-y-4 p-4 md:p-6 bg-white border-b md:border md:rounded-2xl ${showFilters ? 'block' : 'hidden md:block'}`}>
+          {/* Main Search Row */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
             {/* Search */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Search items or services..."
                 onChange={(e) => debouncedSearch(e.target.value)}
-                className="pl-10 bg-white/80 backdrop-blur-sm border-blue-200/50"
+                className="pl-10"
               />
             </div>
             
@@ -351,13 +405,13 @@ const Browse = () => {
                 placeholder="City or area..."
                 value={locationFilter}
                 onChange={(e) => setLocationFilter(e.target.value)}
-                className="pl-10 bg-white/80 backdrop-blur-sm border-blue-200/50"
+                className="pl-10"
               />
             </div>
 
             {/* Type Filter */}
             <Select value={selectedType} onValueChange={(value: ListingType) => setSelectedType(value)}>
-              <SelectTrigger className="bg-white/80 backdrop-blur-sm border-blue-200/50">
+              <SelectTrigger>
                 <SelectValue placeholder="Type" />
               </SelectTrigger>
               <SelectContent>
@@ -369,7 +423,7 @@ const Browse = () => {
 
             {/* Category Filter */}
             <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-              <SelectTrigger className="bg-white/80 backdrop-blur-sm border-blue-200/50">
+              <SelectTrigger>
                 <Filter className="h-4 w-4 mr-2" />
                 <SelectValue placeholder="Category" />
               </SelectTrigger>
@@ -385,18 +439,17 @@ const Browse = () => {
           </div>
 
           {/* Advanced Filters */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-blue-200/30">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 pt-4 border-t border-gray-200">
             {/* Price Range */}
             <div className="space-y-3">
               <label className="text-sm font-medium text-foreground">
-                Price Range: ${priceRange[0]} - ${priceRange[1]}
+                Price: ${priceRange[0]} - ${priceRange[1]}
               </label>
               <Slider
                 value={priceRange}
                 onValueChange={setPriceRange}
                 max={1000}
                 step={10}
-                className="[&_[role=slider]]:bg-primary"
               />
             </div>
 
@@ -404,7 +457,7 @@ const Browse = () => {
             <div className="space-y-3">
               <label className="text-sm font-medium text-foreground">Delivery</label>
               <Select value={deliveryFilter} onValueChange={setDeliveryFilter}>
-                <SelectTrigger className="bg-white/80 backdrop-blur-sm border-blue-200/50">
+                <SelectTrigger>
                   <Truck className="h-4 w-4 mr-2" />
                   <SelectValue placeholder="Delivery Options" />
                 </SelectTrigger>
@@ -421,7 +474,7 @@ const Browse = () => {
             <div className="space-y-3">
               <label className="text-sm font-medium text-foreground">Sort By</label>
               <Select value={sortBy} onValueChange={setSortBy}>
-                <SelectTrigger className="bg-white/80 backdrop-blur-sm border-blue-200/50">
+                <SelectTrigger>
                   <SelectValue placeholder="Sort by" />
                 </SelectTrigger>
                 <SelectContent>
@@ -429,111 +482,113 @@ const Browse = () => {
                   <SelectItem value="price_low">Price: Low to High</SelectItem>
                   <SelectItem value="price_high">Price: High to Low</SelectItem>
                   <SelectItem value="popular">Most Popular</SelectItem>
-                  <SelectItem value="rating">Highest Rated</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           </div>
+
+          {/* Active Filters & Clear */}
+          {hasActiveFilters && (
+            <div className="flex items-center justify-between pt-4 border-t border-gray-200">
+              <div className="text-sm text-muted-foreground">
+                Active filters applied
+              </div>
+              <Button variant="ghost" size="sm" onClick={clearFilters} className="flex items-center gap-2">
+                <X className="h-4 w-4" />
+                Clear All
+              </Button>
+            </div>
+          )}
         </div>
 
         {/* Results Summary */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between px-4">
           <div className="text-sm text-muted-foreground">
-            Showing {filteredListings?.length || 0} results
+            {isLoading ? 'Loading...' : `${filteredListings?.length || 0} results`}
             {locationFilter && ` in ${locationFilter}`}
           </div>
-          <div className="flex items-center gap-2 text-sm">
-            <Shield className="h-4 w-4 text-green-600" />
-            <span className="text-muted-foreground">Verified listings only</span>
-          </div>
         </div>
+
+        {/* Error State */}
+        {error && (
+          <div className="mx-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <div className="text-red-800 text-sm">
+              <strong>Error loading listings:</strong> Please check your connection and try again.
+            </div>
+          </div>
+        )}
 
         {/* Listings Display */}
         {isLoading ? (
           <LoadingSkeleton />
         ) : (
-          <Tabs defaultValue="all" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-3 lg:w-auto lg:inline-flex bg-muted/50 p-1 rounded-lg">
-              <TabsTrigger 
-                value="all" 
-                className="flex items-center gap-2 data-[state=active]:bg-white data-[state=active]:shadow-sm transition-all duration-200"
-              >
-                All Listings ({listings?.length || 0})
+          <Tabs defaultValue="all" className="space-y-4 md:space-y-6 px-4">
+            <TabsList className="grid w-full grid-cols-3 bg-muted/50 p-1 rounded-lg">
+              <TabsTrigger value="all" className="text-xs md:text-sm">
+                All ({listings?.length || 0})
               </TabsTrigger>
-              <TabsTrigger 
-                value="items" 
-                className="flex items-center gap-2 data-[state=active]:bg-white data-[state=active]:shadow-sm transition-all duration-200"
-              >
-                <Package className="h-4 w-4" />
+              <TabsTrigger value="items" className="text-xs md:text-sm flex items-center gap-1">
+                <Package className="h-3 w-3 md:h-4 md:w-4" />
                 Items ({items.length})
               </TabsTrigger>
-              <TabsTrigger 
-                value="services" 
-                className="flex items-center gap-2 data-[state=active]:bg-white data-[state=active]:shadow-sm transition-all duration-200"
-              >
-                <Wrench className="h-4 w-4" />
+              <TabsTrigger value="services" className="text-xs md:text-sm flex items-center gap-1">
+                <Wrench className="h-3 w-3 md:h-4 md:w-4" />
                 Services ({services.length})
               </TabsTrigger>
             </TabsList>
 
-            <TabsContent value="all" className="space-y-6 animate-fade-in">
+            <TabsContent value="all" className="space-y-4 md:space-y-6">
               {filteredListings?.length === 0 ? (
-                <div className="text-center py-16 space-y-4">
-                  <div className="w-24 h-24 mx-auto bg-gradient-to-br from-gray-100 to-gray-200 rounded-full flex items-center justify-center">
-                    <Search className="h-10 w-10 text-gray-400" />
+                <div className="text-center py-8 md:py-16 space-y-4">
+                  <div className="w-16 h-16 md:w-24 md:h-24 mx-auto bg-gray-100 rounded-full flex items-center justify-center">
+                    <Search className="h-8 w-8 md:h-10 md:w-10 text-gray-400" />
                   </div>
                   <div>
                     <h3 className="text-lg font-semibold text-foreground mb-2">No listings found</h3>
-                    <p className="text-muted-foreground max-w-md mx-auto">
-                      Try adjusting your filters or search terms to find what you're looking for.
+                    <p className="text-muted-foreground text-sm md:text-base">
+                      Try adjusting your filters or search terms.
                     </p>
                   </div>
-                  <Button 
-                    variant="outline" 
-                    onClick={() => {
-                      setSearchTerm('');
-                      setLocationFilter('');
-                      setSelectedCategory('all');
-                      setPriceRange([0, 1000]);
-                    }}
-                  >
-                    Clear All Filters
-                  </Button>
+                  {hasActiveFilters && (
+                    <Button variant="outline" onClick={clearFilters}>
+                      Clear All Filters
+                    </Button>
+                  )}
                 </div>
               ) : (
-                <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 animate-fade-in">
+                <div className="grid gap-4 md:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
                   {filteredListings?.map(renderListingCard)}
                 </div>
               )}
             </TabsContent>
 
-            <TabsContent value="items" className="space-y-6 animate-fade-in">
+            <TabsContent value="items" className="space-y-4 md:space-y-6">
               {items.length === 0 ? (
-                <div className="text-center py-16 space-y-4">
-                  <Package className="h-16 w-16 text-muted-foreground mx-auto" />
+                <div className="text-center py-8 md:py-16 space-y-4">
+                  <Package className="h-12 w-12 md:h-16 md:w-16 text-muted-foreground mx-auto" />
                   <div>
                     <h3 className="text-lg font-semibold text-foreground mb-2">No items found</h3>
-                    <p className="text-muted-foreground">Try adjusting your filters to find items.</p>
+                    <p className="text-muted-foreground">Try adjusting your filters.</p>
                   </div>
                 </div>
               ) : (
-                <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 animate-fade-in">
+                <div className="grid gap-4 md:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
                   {items.map(renderListingCard)}
                 </div>
               )}
             </TabsContent>
 
-            <TabsContent value="services" className="space-y-6 animate-fade-in">
+            <TabsContent value="services" className="space-y-4 md:space-y-6">
               {services.length === 0 ? (
-                <div className="text-center py-16 space-y-4">
-                  <Wrench className="h-16 w-16 text-muted-foreground mx-auto" />
+                <div className="text-center py-8 md:py-16 space-y-4">
+                  <Wrench className="h-12 w-12 md:h-16 md:w-16 text-muted-foreground mx-auto" />
                   <div>
                     <h3 className="text-lg font-semibold text-foreground mb-2">No services found</h3>
-                    <p className="text-muted-foreground">Try adjusting your filters to find services.</p>
+                    <p className="text-muted-foreground">Try adjusting your filters.</p>
                   </div>
                 </div>
               ) : (
-                <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 animate-fade-in">
+                <div className="grid gap-4 md:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
                   {services.map(renderListingCard)}
                 </div>
               )}
