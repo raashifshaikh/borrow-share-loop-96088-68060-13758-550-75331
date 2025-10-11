@@ -9,11 +9,19 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Slider } from '@/components/ui/slider';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { Search, Filter, Heart, MapPin, Package, Wrench, Star, Truck, Eye, X } from 'lucide-react';
+import { Search, Filter, Heart, MapPin, Package, Wrench, Star, Truck, Eye, X, DollarSign, IndianRupee, Landmark } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { debounce } from 'lodash';
 
 type ListingType = 'all' | 'item' | 'service';
+type CurrencyCode = 'USD' | 'INR' | 'PKR';
+
+// Currency configuration
+const CURRENCIES = {
+  USD: { symbol: '$', name: 'US Dollar', icon: DollarSign, conversionRate: 1 },
+  INR: { symbol: '₹', name: 'Indian Rupee', icon: IndianRupee, conversionRate: 83 },
+  PKR: { symbol: 'Rs', name: 'Pakistani Rupee', icon: Landmark, conversionRate: 280 }
+} as const;
 
 const Browse = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -24,6 +32,7 @@ const Browse = () => {
   const [priceRange, setPriceRange] = useState([0, 1000]);
   const [deliveryFilter, setDeliveryFilter] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
+  const [selectedCurrency, setSelectedCurrency] = useState<CurrencyCode>('USD');
 
   // Debounced search for better performance
   const debouncedSearch = useCallback(
@@ -45,16 +54,37 @@ const Browse = () => {
     }
   });
 
+  // Convert price based on selected currency
+  const convertPrice = useCallback((price: number, fromCurrency: CurrencyCode, toCurrency: CurrencyCode) => {
+    if (fromCurrency === toCurrency) return price;
+    
+    const fromRate = CURRENCIES[fromCurrency].conversionRate;
+    const toRate = CURRENCIES[toCurrency].conversionRate;
+    
+    return (price * fromRate) / toRate;
+  }, []);
+
+  // Format price display
+  const formatPrice = useCallback((price: number, currency: CurrencyCode) => {
+    const formattedPrice = new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2
+    }).format(price);
+    
+    return `${CURRENCIES[currency].symbol}${formattedPrice}`;
+  }, []);
+
   // Fixed database query - simplified to avoid relationship issues
   const { data: listings, isLoading, error } = useQuery({
-    queryKey: ['listings', searchTerm, selectedCategory, sortBy, locationFilter, priceRange, deliveryFilter],
+    queryKey: ['listings', searchTerm, selectedCategory, sortBy, locationFilter, priceRange, deliveryFilter, selectedCurrency],
     queryFn: async () => {
       console.log('Fetching listings with filters:', {
         searchTerm,
         selectedCategory,
         locationFilter,
         priceRange,
-        deliveryFilter
+        deliveryFilter,
+        selectedCurrency
       });
 
       let query = supabase
@@ -72,9 +102,13 @@ const Browse = () => {
         query = query.eq('category_id', selectedCategory);
       }
 
-      // Price range filter
-      if (priceRange[1] < 1000) {
-        query = query.gte('price', priceRange[0]).lte('price', priceRange[1]);
+      // Price range filter - convert to base currency (USD) for filtering
+      const basePriceRange = priceRange.map(price => 
+        convertPrice(price, selectedCurrency, 'USD')
+      );
+      
+      if (basePriceRange[1] < convertPrice(1000, selectedCurrency, 'USD')) {
+        query = query.gte('price', basePriceRange[0]).lte('price', basePriceRange[1]);
       }
 
       // Location filter - handle both address and location columns
@@ -150,6 +184,35 @@ const Browse = () => {
       ? items 
       : services;
 
+  // Currency selector component
+  const CurrencySelector = () => {
+    const CurrencyIcon = CURRENCIES[selectedCurrency].icon;
+    
+    return (
+      <Select value={selectedCurrency} onValueChange={(value: CurrencyCode) => setSelectedCurrency(value)}>
+        <SelectTrigger className="min-w-[120px]">
+          <div className="flex items-center gap-2">
+            <CurrencyIcon className="h-4 w-4" />
+            <SelectValue placeholder="Currency" />
+          </div>
+        </SelectTrigger>
+        <SelectContent>
+          {Object.entries(CURRENCIES).map(([code, currency]) => {
+            const IconComponent = currency.icon;
+            return (
+              <SelectItem key={code} value={code} className="text-sm">
+                <div className="flex items-center gap-2">
+                  <IconComponent className="h-4 w-4" />
+                  <span>{currency.name} ({currency.symbol})</span>
+                </div>
+              </SelectItem>
+            );
+          })}
+        </SelectContent>
+      </Select>
+    );
+  };
+
   const getConditionColor = (condition: string) => {
     const colors = {
       new: 'bg-green-100 text-green-800 border-green-200',
@@ -194,6 +257,15 @@ const Browse = () => {
     const conditionBadge = listing.condition ? getConditionColor(listing.condition) : '';
     const locationInfo = getLocationInfo(listing);
     const categoryName = categoryMap?.get(listing.category_id);
+    
+    // Convert price to selected currency
+    const displayPrice = convertPrice(
+      listing.price, 
+      (listing.currency as CurrencyCode) || 'USD', 
+      selectedCurrency
+    );
+    
+    const CurrencyIcon = CURRENCIES[selectedCurrency].icon;
     
     return (
       <Card 
@@ -240,6 +312,15 @@ const Browse = () => {
             <Truck className="h-3 w-3 mr-1" />
             {deliveryBadge.text}
           </Badge>
+
+          {/* Currency Badge */}
+          <Badge 
+            variant="secondary" 
+            className="absolute top-2 right-10 text-xs border bg-white/90"
+          >
+            <CurrencyIcon className="h-3 w-3 mr-1" />
+            {listing.currency || 'USD'}
+          </Badge>
         </div>
         
         <CardHeader className="pb-3 flex-grow-0 space-y-2 px-4 pt-4">
@@ -248,8 +329,9 @@ const Browse = () => {
               {listing.title}
             </h3>
             <div className="text-right flex-shrink-0">
-              <div className="font-bold text-base text-green-600">
-                ${listing.price}
+              <div className="font-bold text-base text-green-600 flex items-center gap-1">
+                <CurrencyIcon className="h-3 w-3" />
+                {formatPrice(displayPrice, selectedCurrency)}
               </div>
               <div className="text-xs text-muted-foreground capitalize">
                 {listing.price_type?.replace('_', ' ') || 'fixed'}
@@ -354,6 +436,9 @@ const Browse = () => {
 
   const hasActiveFilters = searchTerm || locationFilter || selectedType !== 'all' || selectedCategory !== 'all' || priceRange[1] < 1000 || deliveryFilter !== 'all';
 
+  // Update price range label based on selected currency
+  const priceRangeLabel = `${formatPrice(priceRange[0], selectedCurrency)} - ${formatPrice(priceRange[1], selectedCurrency)}`;
+
   return (
     <DashboardLayout>
       <div className="space-y-4 md:space-y-6 min-h-screen pb-8">
@@ -387,7 +472,7 @@ const Browse = () => {
         {/* Search and Filters */}
         <div className={`space-y-4 p-4 md:p-6 bg-white border-b md:border md:rounded-2xl ${showFilters ? 'block' : 'hidden md:block'}`}>
           {/* Main Search Row */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4">
             {/* Search */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -436,6 +521,9 @@ const Browse = () => {
                 ))}
               </SelectContent>
             </Select>
+
+            {/* Currency Selector */}
+            <CurrencySelector />
           </div>
 
           {/* Advanced Filters */}
@@ -443,7 +531,7 @@ const Browse = () => {
             {/* Price Range */}
             <div className="space-y-3">
               <label className="text-sm font-medium text-foreground">
-                Price: ${priceRange[0]} - ${priceRange[1]}
+                Price: {priceRangeLabel}
               </label>
               <Slider
                 value={priceRange}
@@ -506,6 +594,12 @@ const Browse = () => {
           <div className="text-sm text-muted-foreground">
             {isLoading ? 'Loading...' : `${filteredListings?.length || 0} results`}
             {locationFilter && ` in ${locationFilter}`}
+          </div>
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span>Currency:</span>
+            <Badge variant="outline" className="text-xs">
+              {CURRENCIES[selectedCurrency].symbol} {selectedCurrency}
+            </Badge>
           </div>
         </div>
 
