@@ -16,7 +16,7 @@ import { debounce } from 'lodash';
 type ListingType = 'all' | 'item' | 'service';
 type CurrencyCode = 'USD' | 'INR' | 'PKR';
 
-// Currency configuration with proper icons
+// Currency configuration
 const CURRENCIES = {
   USD: { symbol: '$', name: 'US Dollar', icon: '💵', conversionRate: 1 },
   INR: { symbol: '₹', name: 'Indian Rupee', icon: '🇮🇳', conversionRate: 83 },
@@ -76,7 +76,7 @@ const Browse = () => {
 
   // Get display price for listing
   const getDisplayPrice = useCallback((listing: any) => {
-    const listingCurrency = listing.currency as CurrencyCode || 'USD';
+    const listingCurrency = (listing.currency as CurrencyCode) || 'USD';
     return convertPrice(listing.price, listingCurrency, selectedCurrency);
   }, [selectedCurrency, convertPrice]);
 
@@ -265,7 +265,7 @@ const Browse = () => {
     
     // Get display price
     const displayPrice = getDisplayPrice(listing);
-    const listingCurrency = listing.currency as CurrencyCode || 'USD';
+    const listingCurrency = (listing.currency as CurrencyCode) || 'USD';
     const currencyIcon = getCurrencyIcon(listingCurrency);
     
     return (
