@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,6 +18,69 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { Skeleton } from '@/components/ui/skeleton';
 
+// Type definitions for better type safety
+interface Profile {
+  id: string;
+  name: string;
+  avatar_url: string | null;
+}
+
+interface Listing {
+  id: string;
+  title: string;
+  images: string[];
+}
+
+interface Order {
+  id: string;
+  buyer_id: string;
+  seller_id: string;
+  listing_id: string;
+  status: string;
+  created_at: string;
+  final_amount: number;
+  listings: Listing;
+}
+
+interface Conversation {
+  orderId: string;
+  listingId: string;
+  listingTitle: string;
+  listingImage: string;
+  otherUser: Profile;
+  lastMessage: string;
+  lastMessageTime: string;
+  unreadCount: number;
+  orderStatus: string;
+  amount: number;
+}
+
+interface BaseMessage {
+  id: string;
+  created_at: string;
+  from_user_id: string;
+  order_id: string;
+  type: 'message' | 'negotiation';
+  from_user?: Profile;
+}
+
+interface ChatMessage extends BaseMessage {
+  type: 'message';
+  message_text: string;
+  to_user_id: string;
+  read_at: string | null;
+  to_user?: Profile;
+}
+
+interface NegotiationMessage extends BaseMessage {
+  type: 'negotiation';
+  action: 'offer' | 'counter' | 'accept' | 'decline';
+  amount: number;
+  message: string | null;
+}
+
+type Message = ChatMessage | NegotiationMessage;
+
 const Messages = () => {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -31,15 +94,28 @@ const Messages = () => {
   const [negotiationAmount, setNegotiationAmount] = useState('');
   const [negotiationMessage, setNegotiationMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [isNearBottom, setIsNearBottom] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
 
-  // Fetch conversations (grouped by order_id)
+  // Track scroll position
+  const handleScroll = useCallback(() => {
+    const el = scrollAreaRef.current;
+    if (!el) return;
+
+    const { scrollTop, scrollHeight, clientHeight } = el;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    setIsNearBottom(distanceFromBottom < 200);
+  }, []);
+
+  // Optimized conversation fetching with batched queries
   const { data: conversations, isLoading: conversationsLoading } = useQuery({
     queryKey: ['conversations', user?.id],
-    queryFn: async () => {
+    queryFn: async (): Promise<Conversation[]> => {
       if (!user?.id) return [];
 
-      const { data: orders, error } = await supabase
+      // Fetch orders
+      const { data: orders, error: ordersError } = await supabase
         .from('orders')
         .select(`
           id,
@@ -58,47 +134,89 @@ const Messages = () => {
         .or(`buyer_id.eq.${user.id},seller_id.eq.${user.id}`)
         .order('created_at', { ascending: false });
 
-      if (error || !orders) return [];
+      if (ordersError || !orders) {
+        console.error('Error fetching orders:', ordersError);
+        return [];
+      }
 
-      const conversationsWithDetails = await Promise.all(
-        orders.map(async (order) => {
-          const otherUserId = order.buyer_id === user.id ? order.seller_id : order.buyer_id;
-          
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('id, name, avatar_url')
-            .eq('id', otherUserId)
-            .single();
+      if (orders.length === 0) return [];
 
-          const { data: lastMessage } = await supabase
-            .from('chat_messages')
-            .select('message_text, created_at')
-            .eq('order_id', order.id)
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
+      // Batch fetch all related data
+      const orderIds = orders.map(o => o.id);
+      const userIds = [...new Set(orders.flatMap(o => [o.buyer_id, o.seller_id]))];
 
-          const { count: unreadCount } = await supabase
-            .from('chat_messages')
-            .select('*', { count: 'exact', head: true })
-            .eq('order_id', order.id)
-            .eq('to_user_id', user.id)
-            .is('read_at', null);
+      // Fetch all profiles in one query
+      const { data: profiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, name, avatar_url')
+        .in('id', userIds);
 
-          return {
-            orderId: order.id,
-            listingId: order.listing_id,
-            listingTitle: order.listings?.title || 'Unknown Item',
-            listingImage: order.listings?.images?.[0],
-            otherUser: profile || { id: otherUserId, name: 'Unknown User', avatar_url: null },
-            lastMessage: lastMessage?.message_text,
-            lastMessageTime: lastMessage?.created_at,
-            unreadCount: unreadCount || 0,
-            orderStatus: order.status,
-            amount: order.final_amount
-          };
-        })
-      );
+      if (profilesError) {
+        console.error('Error fetching profiles:', profilesError);
+        return [];
+      }
+
+      const profilesMap = new Map(profiles?.map(p => [p.id, p]) || []);
+
+      // Fetch last messages for all orders
+      const { data: lastMessages, error: messagesError } = await supabase
+        .from('chat_messages')
+        .select('order_id, message_text, created_at')
+        .in('order_id', orderIds)
+        .order('created_at', { ascending: false });
+
+      if (messagesError) {
+        console.error('Error fetching last messages:', messagesError);
+      }
+
+      // Create last messages map
+      const lastMessagesMap = new Map();
+      lastMessages?.forEach(msg => {
+        if (!lastMessagesMap.has(msg.order_id)) {
+          lastMessagesMap.set(msg.order_id, msg);
+        }
+      });
+
+      // Fetch unread counts for all orders
+      const { data: unreadMessages, error: unreadError } = await supabase
+        .from('chat_messages')
+        .select('order_id, id')
+        .in('order_id', orderIds)
+        .eq('to_user_id', user.id)
+        .is('read_at', null);
+
+      if (unreadError) {
+        console.error('Error fetching unread messages:', unreadError);
+      }
+
+      const unreadCountsMap = new Map();
+      unreadMessages?.forEach(msg => {
+        unreadCountsMap.set(msg.order_id, (unreadCountsMap.get(msg.order_id) || 0) + 1);
+      });
+
+      // Build conversations
+      const conversationsWithDetails = orders.map((order): Conversation => {
+        const otherUserId = order.buyer_id === user.id ? order.seller_id : order.buyer_id;
+        const lastMessage = lastMessagesMap.get(order.id);
+        const unreadCount = unreadCountsMap.get(order.id) || 0;
+
+        return {
+          orderId: order.id,
+          listingId: order.listing_id,
+          listingTitle: order.listings?.title || 'Unknown Item',
+          listingImage: order.listings?.images?.[0] || '',
+          otherUser: profilesMap.get(otherUserId) || { 
+            id: otherUserId, 
+            name: 'Unknown User', 
+            avatar_url: null 
+          },
+          lastMessage: lastMessage?.message_text || '',
+          lastMessageTime: lastMessage?.created_at || order.created_at,
+          unreadCount,
+          orderStatus: order.status,
+          amount: order.final_amount || 0
+        };
+      });
 
       return conversationsWithDetails;
     },
@@ -118,31 +236,36 @@ const Messages = () => {
   // Fetch messages and negotiations for selected order
   const { data: messages, isLoading: messagesLoading } = useQuery({
     queryKey: ['messages', selectedOrderId],
-    queryFn: async () => {
+    queryFn: async (): Promise<Message[]> => {
       if (!selectedOrderId) return [];
 
-      const { data: chatMessages } = await supabase
-        .from('chat_messages')
-        .select(`
-          *,
-          from_user:profiles!from_user_id(id, name, avatar_url),
-          to_user:profiles!to_user_id(id, name, avatar_url)
-        `)
-        .eq('order_id', selectedOrderId)
-        .order('created_at', { ascending: true });
+      const [chatMessagesResult, negotiationsResult] = await Promise.all([
+        supabase
+          .from('chat_messages')
+          .select(`
+            *,
+            from_user:profiles!from_user_id(id, name, avatar_url),
+            to_user:profiles!to_user_id(id, name, avatar_url)
+          `)
+          .eq('order_id', selectedOrderId)
+          .order('created_at', { ascending: true }),
+        
+        supabase
+          .from('order_negotiations')
+          .select(`
+            *,
+            from_user:profiles!from_user_id(id, name, avatar_url)
+          `)
+          .eq('order_id', selectedOrderId)
+          .order('created_at', { ascending: true })
+      ]);
 
-      const { data: negotiations } = await supabase
-        .from('order_negotiations')
-        .select(`
-          *,
-          from_user:profiles!from_user_id(id, name, avatar_url)
-        `)
-        .eq('order_id', selectedOrderId)
-        .order('created_at', { ascending: true });
+      const chatMessages = chatMessagesResult.data || [];
+      const negotiations = negotiationsResult.data || [];
 
-      const allMessages = [
-        ...(chatMessages || []).map(msg => ({ ...msg, type: 'message' })),
-        ...(negotiations || []).map(neg => ({ ...neg, type: 'negotiation' }))
+      const allMessages: Message[] = [
+        ...chatMessages.map(msg => ({ ...msg, type: 'message' as const })),
+        ...negotiations.map(neg => ({ ...neg, type: 'negotiation' as const }))
       ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
       return allMessages;
@@ -150,17 +273,21 @@ const Messages = () => {
     enabled: !!selectedOrderId
   });
 
-  // Auto-scroll to bottom when messages change
+  // Smart auto-scroll to bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (isNearBottom && messages && messages.length > 0) {
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
+  }, [messages, isNearBottom]);
 
   // Mark messages as read
   useEffect(() => {
     if (!selectedOrderId || !user?.id || !messages) return;
 
     const unreadMessages = messages.filter(
-      m => m.type === 'message' && 'to_user_id' in m && m.to_user_id === user.id && !m.read_at
+      (m): m is ChatMessage => m.type === 'message' && m.to_user_id === user.id && !m.read_at
     );
 
     if (unreadMessages.length > 0) {
@@ -175,7 +302,7 @@ const Messages = () => {
     }
   }, [selectedOrderId, user?.id, messages, queryClient]);
 
-  // Send message
+  // Optimistic message sending
   const sendMessage = async () => {
     if (!newMessage.trim() || !selectedOrderId || !user?.id) return;
 
@@ -190,16 +317,46 @@ const Messages = () => {
       message_text: newMessage.trim()
     };
 
+    // Optimistic update
+    const tempMsg: ChatMessage = {
+      id: `temp-${Date.now()}`,
+      message_text: newMessage.trim(),
+      created_at: new Date().toISOString(),
+      from_user_id: user.id,
+      to_user_id: currentConv.otherUser.id,
+      order_id: selectedOrderId,
+      type: 'message',
+      read_at: null,
+      from_user: {
+        id: user.id,
+        name: user.user_metadata?.name || 'You',
+        avatar_url: user.user_metadata?.avatar_url || null
+      }
+    };
+
     setIsSending(true);
     const messageText = newMessage;
     setNewMessage('');
 
+    // Update cache optimistically
+    queryClient.setQueryData(['messages', selectedOrderId], (old: Message[] = []) => [...old, tempMsg]);
+    queryClient.invalidateQueries({ queryKey: ['conversations'] });
+
     const { error } = await supabase.from('chat_messages').insert([payload]);
 
     if (error) {
-      toast({ title: 'Failed to send message', description: error.message, variant: 'destructive' });
+      // Rollback on error
+      queryClient.setQueryData(['messages', selectedOrderId], (old: Message[] = []) => 
+        old.filter(m => m.id !== tempMsg.id)
+      );
+      toast({ 
+        title: 'Failed to send message', 
+        description: error.message, 
+        variant: 'destructive' 
+      });
       setNewMessage(messageText);
     }
+    
     setIsSending(false);
   };
 
@@ -207,21 +364,28 @@ const Messages = () => {
   const acceptNegotiation = useMutation({
     mutationFn: async (negotiationId: string) => {
       const negotiation = messages?.find(m => m.id === negotiationId);
-      if (!negotiation || !selectedOrderId || negotiation.type !== 'negotiation') throw new Error('Negotiation not found');
-      if (!('amount' in negotiation)) throw new Error('Invalid negotiation');
+      if (!negotiation || !selectedOrderId || negotiation.type !== 'negotiation') {
+        throw new Error('Negotiation not found');
+      }
 
       const currentConv = conversations?.find(c => c.orderId === selectedOrderId);
       if (!currentConv) throw new Error('Conversation not found');
 
-      await supabase.from('order_negotiations').insert({
-        order_id: selectedOrderId,
-        from_user_id: user?.id,
-        action: 'accept',
-        amount: negotiation.amount,
-        message: 'Offer accepted'
-      });
+      // Create acceptance negotiation record
+      const { error: negotiationError } = await supabase
+        .from('order_negotiations')
+        .insert({
+          order_id: selectedOrderId,
+          from_user_id: user?.id,
+          action: 'accept',
+          amount: negotiation.amount,
+          message: 'Offer accepted'
+        });
 
-      await supabase
+      if (negotiationError) throw negotiationError;
+
+      // Update order with negotiated price
+      const { error: orderError } = await supabase
         .from('orders')
         .update({
           negotiated_price: negotiation.amount,
@@ -229,14 +393,23 @@ const Messages = () => {
           status: 'accepted'
         })
         .eq('id', selectedOrderId);
+
+      if (orderError) throw orderError;
     },
     onSuccess: () => {
-      toast({ title: 'Offer accepted!', description: 'The order has been updated.' });
-      queryClient.invalidateQueries({ queryKey: ['messages'] });
+      toast({ 
+        title: 'Offer accepted!', 
+        description: 'The order has been updated.' 
+      });
+      queryClient.invalidateQueries({ queryKey: ['messages', selectedOrderId] });
       queryClient.invalidateQueries({ queryKey: ['conversations'] });
     },
-    onError: (error: any) => {
-      toast({ title: 'Failed to accept offer', description: error.message, variant: 'destructive' });
+    onError: (error: Error) => {
+      toast({ 
+        title: 'Failed to accept offer', 
+        description: error.message, 
+        variant: 'destructive' 
+      });
     }
   });
 
@@ -244,50 +417,70 @@ const Messages = () => {
   const declineNegotiation = useMutation({
     mutationFn: async (negotiationId: string) => {
       const negotiation = messages?.find(m => m.id === negotiationId);
-      if (!negotiation || !selectedOrderId || negotiation.type !== 'negotiation') throw new Error('Negotiation not found');
+      if (!negotiation || !selectedOrderId || negotiation.type !== 'negotiation') {
+        throw new Error('Negotiation not found');
+      }
 
-      await supabase.from('order_negotiations').insert({
-        order_id: selectedOrderId,
-        from_user_id: user?.id,
-        action: 'decline',
-        message: 'Offer declined'
-      });
+      const { error } = await supabase
+        .from('order_negotiations')
+        .insert({
+          order_id: selectedOrderId,
+          from_user_id: user?.id,
+          action: 'decline',
+          message: 'Offer declined'
+        });
+
+      if (error) throw error;
     },
     onSuccess: () => {
       toast({ title: 'Offer declined' });
-      queryClient.invalidateQueries({ queryKey: ['messages'] });
+      queryClient.invalidateQueries({ queryKey: ['messages', selectedOrderId] });
     },
-    onError: (error: any) => {
-      toast({ title: 'Failed to decline offer', description: error.message, variant: 'destructive' });
+    onError: (error: Error) => {
+      toast({ 
+        title: 'Failed to decline offer', 
+        description: error.message, 
+        variant: 'destructive' 
+      });
     }
   });
 
   // Send counter offer
   const sendCounterOffer = useMutation({
     mutationFn: async () => {
-      if (!selectedOrderId || !negotiationAmount) throw new Error('Missing data');
+      if (!selectedOrderId || !negotiationAmount || !user?.id) {
+        throw new Error('Missing data');
+      }
 
-      await supabase.from('order_negotiations').insert({
-        order_id: selectedOrderId,
-        from_user_id: user?.id,
-        action: 'counter',
-        amount: parseFloat(negotiationAmount),
-        message: negotiationMessage || null
-      });
+      const { error } = await supabase
+        .from('order_negotiations')
+        .insert({
+          order_id: selectedOrderId,
+          from_user_id: user.id,
+          action: 'counter',
+          amount: parseFloat(negotiationAmount),
+          message: negotiationMessage || null
+        });
+
+      if (error) throw error;
     },
     onSuccess: () => {
       toast({ title: 'Counter offer sent!' });
       setShowNegotiationDialog(false);
       setNegotiationAmount('');
       setNegotiationMessage('');
-      queryClient.invalidateQueries({ queryKey: ['messages'] });
+      queryClient.invalidateQueries({ queryKey: ['messages', selectedOrderId] });
     },
-    onError: (error: any) => {
-      toast({ title: 'Failed to send offer', description: error.message, variant: 'destructive' });
+    onError: (error: Error) => {
+      toast({ 
+        title: 'Failed to send offer', 
+        description: error.message, 
+        variant: 'destructive' 
+      });
     }
   });
 
-  // Real-time subscription
+  // Enhanced realtime subscription
   useEffect(() => {
     if (!selectedOrderId) return;
 
@@ -296,7 +489,7 @@ const Messages = () => {
       .on(
         'postgres_changes',
         {
-          event: 'INSERT',
+          event: '*', // Listen to all events (INSERT, UPDATE, DELETE)
           schema: 'public',
           table: 'chat_messages',
           filter: `order_id=eq.${selectedOrderId}`
@@ -309,13 +502,14 @@ const Messages = () => {
       .on(
         'postgres_changes',
         {
-          event: 'INSERT',
+          event: '*', // Listen to all events
           schema: 'public',
           table: 'order_negotiations',
           filter: `order_id=eq.${selectedOrderId}`
         },
         () => {
           queryClient.invalidateQueries({ queryKey: ['messages', selectedOrderId] });
+          queryClient.invalidateQueries({ queryKey: ['conversations'] });
         }
       )
       .subscribe();
@@ -325,8 +519,8 @@ const Messages = () => {
     };
   }, [selectedOrderId, queryClient]);
 
-  // Render regular message
-  const renderRegularMessage = (msg: any, isFromMe: boolean, showAvatar: boolean) => {
+  // Render regular message with grouping
+  const renderRegularMessage = (msg: ChatMessage, isFromMe: boolean, showAvatar: boolean) => {
     return (
       <div className={`flex gap-2 ${isFromMe ? 'justify-end' : 'justify-start'}`}>
         {!isFromMe && showAvatar && (
@@ -346,6 +540,9 @@ const Messages = () => {
           </div>
           <p className="text-xs text-muted-foreground mt-1 px-1">
             {formatDistanceToNow(new Date(msg.created_at), { addSuffix: true })}
+            {isFromMe && msg.read_at && (
+              <span className="ml-1 text-green-500">✓</span>
+            )}
           </p>
         </div>
 
@@ -360,11 +557,11 @@ const Messages = () => {
   };
 
   // Render negotiation message
-  const renderNegotiationMessage = (negotiation: any, isFromMe: boolean) => {
+  const renderNegotiationMessage = (negotiation: NegotiationMessage, isFromMe: boolean) => {
     const isAccepted = negotiation.action === 'accept';
     const isDeclined = negotiation.action === 'decline';
     const isCounter = negotiation.action === 'counter';
-    const isNewOffer = !isAccepted && !isDeclined && !isCounter;
+    const isNewOffer = negotiation.action === 'offer';
 
     const getStatusColor = () => {
       if (isAccepted) return 'bg-green-100 text-green-800 border-green-200';
@@ -380,12 +577,18 @@ const Messages = () => {
       return 'New Offer';
     };
 
+    const getStatusIcon = () => {
+      if (isAccepted) return <Check className="h-4 w-4" />;
+      if (isDeclined) return <X className="h-4 w-4" />;
+      return <DollarSign className="h-4 w-4" />;
+    };
+
     return (
-      <div className={`flex justify-center my-4`}>
-        <div className={`max-w-md w-full p-4 rounded-lg border ${getStatusColor()}`}>
+      <div className="flex justify-center my-4">
+        <div className={`max-w-md w-full p-4 rounded-lg border-2 ${getStatusColor()}`}>
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
-              <DollarSign className="h-4 w-4" />
+              {getStatusIcon()}
               <span className="font-medium">Price Negotiation</span>
             </div>
             <Badge variant="secondary" className="text-xs">
@@ -401,6 +604,7 @@ const Messages = () => {
                   size="sm" 
                   onClick={() => acceptNegotiation.mutate(negotiation.id)}
                   className="h-8 px-2"
+                  disabled={acceptNegotiation.isPending}
                 >
                   <Check className="h-3 w-3 mr-1" />
                   Accept
@@ -410,6 +614,7 @@ const Messages = () => {
                   variant="outline"
                   onClick={() => declineNegotiation.mutate(negotiation.id)}
                   className="h-8 px-2"
+                  disabled={declineNegotiation.isPending}
                 >
                   <X className="h-3 w-3 mr-1" />
                   Decline
@@ -419,7 +624,7 @@ const Messages = () => {
           </div>
 
           {negotiation.message && (
-            <p className="text-sm mb-2">{negotiation.message}</p>
+            <p className="text-sm mb-2 bg-white/50 p-2 rounded">{negotiation.message}</p>
           )}
 
           <p className="text-xs text-muted-foreground">
@@ -481,18 +686,23 @@ const Messages = () => {
                         }`}
                       >
                         <div className="flex items-start gap-3">
-                          <Avatar className="h-10 w-10">
-                            <AvatarImage src={conv.otherUser.avatar_url || ''} />
-                            <AvatarFallback>{conv.otherUser.name?.[0] || 'U'}</AvatarFallback>
-                          </Avatar>
+                          <div className="relative">
+                            <Avatar className="h-10 w-10">
+                              <AvatarImage src={conv.otherUser.avatar_url || ''} />
+                              <AvatarFallback>{conv.otherUser.name?.[0] || 'U'}</AvatarFallback>
+                            </Avatar>
+                            {conv.unreadCount > 0 && (
+                              <Badge 
+                                variant="default" 
+                                className="absolute -top-1 -right-1 h-5 min-w-5 px-1 text-xs"
+                              >
+                                {conv.unreadCount}
+                              </Badge>
+                            )}
+                          </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between mb-1">
                               <p className="font-medium truncate">{conv.otherUser.name}</p>
-                              {conv.unreadCount > 0 && (
-                                <Badge variant="default" className="ml-2 h-5 min-w-5 px-1 text-xs">
-                                  {conv.unreadCount}
-                                </Badge>
-                              )}
                             </div>
                             <p className="text-xs text-muted-foreground truncate mb-1">
                               {conv.listingTitle}
@@ -528,7 +738,12 @@ const Messages = () => {
                   : 'Select a conversation'}
               </CardTitle>
               {selectedConversation && (
-                <Badge variant="secondary">${parseFloat(String(selectedConversation.amount || '0')).toFixed(2)}</Badge>
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary">
+                    ${parseFloat(String(selectedConversation.amount || '0')).toFixed(2)}
+                  </Badge>
+                  <Badge variant="outline">{selectedConversation.orderStatus}</Badge>
+                </div>
               )}
             </div>
           </CardHeader>
@@ -551,17 +766,28 @@ const Messages = () => {
                 </div>
               </div>
             ) : (
-              <ScrollArea className="flex-1 pr-4">
+              <ScrollArea 
+                className="flex-1 pr-4" 
+                ref={scrollAreaRef}
+                onScroll={handleScroll}
+              >
                 {messages?.length === 0 ? (
                   <div className="flex items-center justify-center h-full text-muted-foreground">
-                    <p>No messages yet. Start the conversation!</p>
+                    <div className="text-center">
+                      <MessageSquare className="h-16 w-16 mx-auto mb-4 opacity-50" />
+                      <p>No messages yet</p>
+                      <p className="text-sm mt-2">Start the conversation or send an offer!</p>
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-1">
                     {messages?.map((msg, index) => {
                       const isFromMe = msg.from_user_id === user?.id;
                       const prevMsg = index > 0 ? messages[index - 1] : null;
-                      const showAvatar = !prevMsg || prevMsg.from_user_id !== msg.from_user_id || prevMsg.type !== msg.type;
+                      const showAvatar = !prevMsg || 
+                        prevMsg.from_user_id !== msg.from_user_id || 
+                        prevMsg.type !== msg.type ||
+                        new Date(msg.created_at).getTime() - new Date(prevMsg.created_at).getTime() > 300000; // 5 minutes
 
                       if (msg.type === 'negotiation') {
                         return (
@@ -594,7 +820,10 @@ const Messages = () => {
                   onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendMessage()}
                   disabled={isSending}
                 />
-                <Button onClick={sendMessage} disabled={!newMessage.trim() || isSending}>
+                <Button 
+                  onClick={sendMessage} 
+                  disabled={!newMessage.trim() || isSending}
+                >
                   <Send className="w-4 h-4" />
                 </Button>
                 <Button 
@@ -626,6 +855,7 @@ const Messages = () => {
                 id="amount"
                 type="number"
                 step="0.01"
+                min="0.01"
                 placeholder="0.00"
                 value={negotiationAmount}
                 onChange={e => setNegotiationAmount(e.target.value)}
@@ -643,14 +873,17 @@ const Messages = () => {
             </div>
           </div>
           <DialogFooter className="mt-4">
-            <Button variant="outline" onClick={() => setShowNegotiationDialog(false)}>
+            <Button 
+              variant="outline" 
+              onClick={() => setShowNegotiationDialog(false)}
+            >
               Cancel
             </Button>
             <Button 
               onClick={() => sendCounterOffer.mutate()}
-              disabled={!negotiationAmount || parseFloat(negotiationAmount) <= 0}
+              disabled={!negotiationAmount || parseFloat(negotiationAmount) <= 0 || sendCounterOffer.isPending}
             >
-              Send Offer
+              {sendCounterOffer.isPending ? 'Sending...' : 'Send Offer'}
             </Button>
           </DialogFooter>
         </DialogContent>
