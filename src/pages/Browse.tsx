@@ -9,18 +9,18 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Slider } from '@/components/ui/slider';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { Search, Filter, Heart, MapPin, Package, Wrench, Star, Truck, Eye, X, DollarSign, IndianRupee, Landmark } from 'lucide-react';
+import { Search, Filter, Heart, MapPin, Package, Wrench, Star, Truck, Eye, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { debounce } from 'lodash';
 
 type ListingType = 'all' | 'item' | 'service';
 type CurrencyCode = 'USD' | 'INR' | 'PKR';
 
-// Currency configuration
+// Currency configuration with proper icons
 const CURRENCIES = {
-  USD: { symbol: '$', name: 'US Dollar', icon: DollarSign, conversionRate: 1 },
-  INR: { symbol: '₹', name: 'Indian Rupee', icon: IndianRupee, conversionRate: 83 },
-  PKR: { symbol: 'Rs', name: 'Pakistani Rupee', icon: Landmark, conversionRate: 280 }
+  USD: { symbol: '$', name: 'US Dollar', icon: '💵', conversionRate: 1 },
+  INR: { symbol: '₹', name: 'Indian Rupee', icon: '🇮🇳', conversionRate: 83 },
+  PKR: { symbol: 'Rs', name: 'Pakistani Rupee', icon: '🇵🇰', conversionRate: 280 }
 } as const;
 
 const Browse = () => {
@@ -55,10 +55,10 @@ const Browse = () => {
   });
 
   // Convert price based on selected currency
-  const convertPrice = useCallback((price: number, fromCurrency: CurrencyCode, toCurrency: CurrencyCode) => {
+  const convertPrice = useCallback((price: number, fromCurrency: string, toCurrency: CurrencyCode) => {
     if (fromCurrency === toCurrency) return price;
     
-    const fromRate = CURRENCIES[fromCurrency].conversionRate;
+    const fromRate = CURRENCIES[fromCurrency as CurrencyCode]?.conversionRate || 1;
     const toRate = CURRENCIES[toCurrency].conversionRate;
     
     return (price * fromRate) / toRate;
@@ -74,17 +74,22 @@ const Browse = () => {
     return `${CURRENCIES[currency].symbol}${formattedPrice}`;
   }, []);
 
-  // Fixed database query - simplified to avoid relationship issues
+  // Get display price for listing
+  const getDisplayPrice = useCallback((listing: any) => {
+    const listingCurrency = listing.currency as CurrencyCode || 'USD';
+    return convertPrice(listing.price, listingCurrency, selectedCurrency);
+  }, [selectedCurrency, convertPrice]);
+
+  // Fixed database query - handle currency conversion in UI only
   const { data: listings, isLoading, error } = useQuery({
-    queryKey: ['listings', searchTerm, selectedCategory, sortBy, locationFilter, priceRange, deliveryFilter, selectedCurrency],
+    queryKey: ['listings', searchTerm, selectedCategory, sortBy, locationFilter, deliveryFilter, selectedType],
     queryFn: async () => {
       console.log('Fetching listings with filters:', {
         searchTerm,
         selectedCategory,
         locationFilter,
-        priceRange,
         deliveryFilter,
-        selectedCurrency
+        selectedType
       });
 
       let query = supabase
@@ -100,15 +105,6 @@ const Browse = () => {
       // Category filter
       if (selectedCategory !== 'all') {
         query = query.eq('category_id', selectedCategory);
-      }
-
-      // Price range filter - convert to base currency (USD) for filtering
-      const basePriceRange = priceRange.map(price => 
-        convertPrice(price, selectedCurrency, 'USD')
-      );
-      
-      if (basePriceRange[1] < convertPrice(1000, selectedCurrency, 'USD')) {
-        query = query.gte('price', basePriceRange[0]).lte('price', basePriceRange[1]);
       }
 
       // Location filter - handle both address and location columns
@@ -154,6 +150,16 @@ const Browse = () => {
     retry: 1
   });
 
+  // Filter listings by price range (client-side after currency conversion)
+  const filteredListingsByPrice = useMemo(() => {
+    if (!listings) return [];
+    
+    return listings.filter(listing => {
+      const displayPrice = getDisplayPrice(listing);
+      return displayPrice >= priceRange[0] && displayPrice <= priceRange[1];
+    });
+  }, [listings, priceRange, getDisplayPrice]);
+
   // Get category names for display
   const { data: categoryMap } = useQuery({
     queryKey: ['category-map'],
@@ -173,41 +179,36 @@ const Browse = () => {
   }, []);
 
   const { items, services } = useMemo(() => 
-    categorizeListings(listings || []), 
-    [listings, categorizeListings]
+    categorizeListings(filteredListingsByPrice || []), 
+    [filteredListingsByPrice, categorizeListings]
   );
 
   // Filter listings based on selected type
   const filteredListings = selectedType === 'all' 
-    ? listings 
+    ? filteredListingsByPrice 
     : selectedType === 'item' 
       ? items 
       : services;
 
   // Currency selector component
   const CurrencySelector = () => {
-    const CurrencyIcon = CURRENCIES[selectedCurrency].icon;
-    
     return (
       <Select value={selectedCurrency} onValueChange={(value: CurrencyCode) => setSelectedCurrency(value)}>
-        <SelectTrigger className="min-w-[120px]">
+        <SelectTrigger className="min-w-[130px]">
           <div className="flex items-center gap-2">
-            <CurrencyIcon className="h-4 w-4" />
+            <span className="text-sm">{CURRENCIES[selectedCurrency].icon}</span>
             <SelectValue placeholder="Currency" />
           </div>
         </SelectTrigger>
         <SelectContent>
-          {Object.entries(CURRENCIES).map(([code, currency]) => {
-            const IconComponent = currency.icon;
-            return (
-              <SelectItem key={code} value={code} className="text-sm">
-                <div className="flex items-center gap-2">
-                  <IconComponent className="h-4 w-4" />
-                  <span>{currency.name} ({currency.symbol})</span>
-                </div>
-              </SelectItem>
-            );
-          })}
+          {Object.entries(CURRENCIES).map(([code, currency]) => (
+            <SelectItem key={code} value={code} className="text-sm">
+              <div className="flex items-center gap-2">
+                <span className="text-sm">{currency.icon}</span>
+                <span>{currency.name} ({currency.symbol})</span>
+              </div>
+            </SelectItem>
+          ))}
         </SelectContent>
       </Select>
     );
@@ -252,20 +253,20 @@ const Browse = () => {
     return null;
   };
 
+  const getCurrencyIcon = (currencyCode: string) => {
+    return CURRENCIES[currencyCode as CurrencyCode]?.icon || '💵';
+  };
+
   const renderListingCard = (listing: any) => {
     const deliveryBadge = getDeliveryBadge(listing.delivery_options);
     const conditionBadge = listing.condition ? getConditionColor(listing.condition) : '';
     const locationInfo = getLocationInfo(listing);
     const categoryName = categoryMap?.get(listing.category_id);
     
-    // Convert price to selected currency
-    const displayPrice = convertPrice(
-      listing.price, 
-      (listing.currency as CurrencyCode) || 'USD', 
-      selectedCurrency
-    );
-    
-    const CurrencyIcon = CURRENCIES[selectedCurrency].icon;
+    // Get display price
+    const displayPrice = getDisplayPrice(listing);
+    const listingCurrency = listing.currency as CurrencyCode || 'USD';
+    const currencyIcon = getCurrencyIcon(listingCurrency);
     
     return (
       <Card 
@@ -318,8 +319,8 @@ const Browse = () => {
             variant="secondary" 
             className="absolute top-2 right-10 text-xs border bg-white/90"
           >
-            <CurrencyIcon className="h-3 w-3 mr-1" />
-            {listing.currency || 'USD'}
+            <span className="mr-1">{currencyIcon}</span>
+            {listingCurrency}
           </Badge>
         </div>
         
@@ -329,12 +330,12 @@ const Browse = () => {
               {listing.title}
             </h3>
             <div className="text-right flex-shrink-0">
-              <div className="font-bold text-base text-green-600 flex items-center gap-1">
-                <CurrencyIcon className="h-3 w-3" />
-                {formatPrice(displayPrice, selectedCurrency)}
+              <div className="font-bold text-base text-green-600 flex items-center gap-1 justify-end">
+                <span>{formatPrice(displayPrice, selectedCurrency)}</span>
               </div>
               <div className="text-xs text-muted-foreground capitalize">
                 {listing.price_type?.replace('_', ' ') || 'fixed'}
+                {listing.price_type === 'negotiable' && ' • Best offer'}
               </div>
             </div>
           </div>
@@ -377,12 +378,19 @@ const Browse = () => {
             </div>
           )}
 
+          {/* Original Price in Listing Currency */}
+          {listingCurrency !== selectedCurrency && (
+            <div className="text-xs text-muted-foreground">
+              Original: {CURRENCIES[listingCurrency].symbol}{listing.price} {listingCurrency}
+            </div>
+          )}
+
           {/* Stats */}
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
             {listing.views_count > 0 && (
               <div className="flex items-center gap-1">
                 <Eye className="h-3 w-3" />
-                <span>{listing.views_count}</span>
+                <span>{listing.views_count} views</span>
               </div>
             )}
           </div>
@@ -539,6 +547,9 @@ const Browse = () => {
                 max={1000}
                 step={10}
               />
+              <p className="text-xs text-muted-foreground">
+                Filtering in {selectedCurrency}
+              </p>
             </div>
 
             {/* Delivery Options */}
@@ -596,9 +607,9 @@ const Browse = () => {
             {locationFilter && ` in ${locationFilter}`}
           </div>
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span>Currency:</span>
+            <span>Displaying prices in:</span>
             <Badge variant="outline" className="text-xs">
-              {CURRENCIES[selectedCurrency].symbol} {selectedCurrency}
+              {CURRENCIES[selectedCurrency].icon} {selectedCurrency}
             </Badge>
           </div>
         </div>
@@ -619,7 +630,7 @@ const Browse = () => {
           <Tabs defaultValue="all" className="space-y-4 md:space-y-6 px-4">
             <TabsList className="grid w-full grid-cols-3 bg-muted/50 p-1 rounded-lg">
               <TabsTrigger value="all" className="text-xs md:text-sm">
-                All ({listings?.length || 0})
+                All ({filteredListingsByPrice?.length || 0})
               </TabsTrigger>
               <TabsTrigger value="items" className="text-xs md:text-sm flex items-center gap-1">
                 <Package className="h-3 w-3 md:h-4 md:w-4" />
