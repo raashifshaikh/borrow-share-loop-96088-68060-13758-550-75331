@@ -1,4 +1,3 @@
-// components/CreateListing.tsx
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useForm, FormProvider, UseFormReturn } from 'react-hook-form';
@@ -17,9 +16,18 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
-import { Upload, X, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, Save, MapPin, Navigation, DollarSign } from 'lucide-react';
+import { Upload, X, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, Save, MapPin, Navigation, DollarSign, IndianRupee, Landmark } from 'lucide-react';
 
-// Types & Schema - Updated to match your database enums
+// Currency types and configuration
+const CURRENCIES = {
+  USD: { symbol: '$', name: 'US Dollar', icon: DollarSign },
+  INR: { symbol: '₹', name: 'Indian Rupee', icon: IndianRupee },
+  PKR: { symbol: 'Rs', name: 'Pakistani Rupee', icon: Landmark }
+} as const;
+
+type CurrencyCode = keyof typeof CURRENCIES;
+
+// Types & Schema - Updated with currency support
 const addressSchema = z.object({
   street: z.string().min(1, "Street address is required"),
   area: z.string().min(1, "Area is required"),
@@ -40,12 +48,20 @@ const listingFormSchema = z.object({
   condition: z.enum(['new', 'like_new', 'good', 'fair', 'poor']),
   price: z.number().min(0, "Price must be positive"),
   price_type: z.enum(['fixed', 'hourly', 'per_day', 'negotiable']),
+  currency: z.enum(['USD', 'INR', 'PKR']),
   delivery_options: z.array(z.enum(['pickup', 'delivery', 'both'])).min(1, "Select at least one delivery option"),
   images: z.array(z.string()).min(1, "At least one image is required").max(10, "Maximum 10 images allowed"),
   address: addressSchema.optional(),
 });
 
 type ListingFormValues = z.infer<typeof listingFormSchema>;
+
+// Auto-detect user's currency based on location
+const detectUserCurrency = (): CurrencyCode => {
+  // You can implement more sophisticated detection based on user's location
+  // For now, default to USD
+  return 'USD';
+};
 
 // Image Compression Utility
 const compressImage = (file: File): Promise<File> => {
@@ -137,6 +153,44 @@ const useAutoSave = <T,>(
       subscription.unsubscribe();
     };
   }, [form, storageKey, delay]);
+};
+
+// Currency Selector Component
+const CurrencySelector = ({ form }: { form: UseFormReturn<ListingFormValues> }) => {
+  const { watch, setValue } = form;
+  const selectedCurrency = watch('currency');
+
+  const CurrencyIcon = CURRENCIES[selectedCurrency].icon;
+
+  return (
+    <div className="space-y-2">
+      <Label htmlFor="currency" className="text-sm md:text-base">Currency</Label>
+      <Select 
+        value={selectedCurrency} 
+        onValueChange={(value: CurrencyCode) => setValue('currency', value)}
+      >
+        <SelectTrigger className="text-sm md:text-base">
+          <div className="flex items-center gap-2">
+            <CurrencyIcon className="h-4 w-4" />
+            <SelectValue placeholder="Select currency" />
+          </div>
+        </SelectTrigger>
+        <SelectContent>
+          {Object.entries(CURRENCIES).map(([code, currency]) => {
+            const IconComponent = currency.icon;
+            return (
+              <SelectItem key={code} value={code} className="text-sm md:text-base">
+                <div className="flex items-center gap-2">
+                  <IconComponent className="h-4 w-4" />
+                  <span>{currency.name} ({currency.symbol})</span>
+                </div>
+              </SelectItem>
+            );
+          })}
+        </SelectContent>
+      </Select>
+    </div>
+  );
 };
 
 // BasicInfoForm Component
@@ -420,6 +474,19 @@ const PricingDeliveryForm = ({ form }: { form: UseFormReturn<ListingFormValues> 
   const { register, formState: { errors }, watch, setValue } = form;
   const listingType = watch('type');
   const deliveryOptions = watch('delivery_options') || [];
+  const currency = watch('currency');
+  const priceType = watch('price_type');
+
+  const CurrencyIcon = CURRENCIES[currency].icon;
+
+  const getPricePlaceholder = () => {
+    const basePlaceholders = {
+      USD: '0.00',
+      INR: '0.00',
+      PKR: '0.00'
+    };
+    return basePlaceholders[currency];
+  };
 
   return (
     <Card>
@@ -430,14 +497,20 @@ const PricingDeliveryForm = ({ form }: { form: UseFormReturn<ListingFormValues> 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
           <div className="space-y-2">
             <Label htmlFor="price" className="text-sm md:text-base">Price</Label>
-            <Input
-              id="price"
-              type="number"
-              step="0.01"
-              placeholder="0.00"
-              className="text-sm md:text-base"
-              {...register('price', { valueAsNumber: true })}
-            />
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <CurrencyIcon className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <Input
+                id="price"
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder={getPricePlaceholder()}
+                className="text-sm md:text-base pl-10"
+                {...register('price', { valueAsNumber: true })}
+              />
+            </div>
             {errors.price && (
               <p className="text-xs md:text-sm text-destructive">{errors.price.message}</p>
             )}
@@ -460,6 +533,29 @@ const PricingDeliveryForm = ({ form }: { form: UseFormReturn<ListingFormValues> 
                 <SelectItem value="negotiable" className="text-sm md:text-base">Negotiable</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
+          <CurrencySelector form={form} />
+          
+          <div className="space-y-2">
+            <Label className="text-sm md:text-base">Current Price Display</Label>
+            <div className="p-3 bg-muted rounded-lg">
+              <div className="flex items-center gap-2">
+                <CurrencyIcon className="h-5 w-5 text-green-600" />
+                <span className="text-lg font-semibold">
+                  {CURRENCIES[currency].symbol}
+                  {watch('price') || '0.00'}
+                  {priceType === 'hourly' && '/hour'}
+                  {priceType === 'per_day' && '/day'}
+                  {priceType === 'negotiable' && ' (Negotiable)'}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                {CURRENCIES[currency].name}
+              </p>
+            </div>
           </div>
         </div>
 
@@ -686,10 +782,13 @@ const ListingPreview = ({ formData }: { formData: ListingFormValues }) => {
     condition,
     price,
     price_type,
+    currency,
     delivery_options,
     images,
     address
   } = formData;
+
+  const CurrencyIcon = CURRENCIES[currency].icon;
 
   const getPriceText = () => {
     if (!price) return 'Free';
@@ -701,7 +800,7 @@ const ListingPreview = ({ formData }: { formData: ListingFormValues }) => {
       negotiable: ' (Negotiable)'
     };
 
-    return `$${price}${priceTypeMap[price_type] || ''}`;
+    return `${CURRENCIES[currency].symbol}${price}${priceTypeMap[price_type] || ''}`;
   };
 
   const getConditionText = (cond: string) => {
@@ -734,9 +833,14 @@ const ListingPreview = ({ formData }: { formData: ListingFormValues }) => {
         <div className="space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
             <h3 className="text-lg md:text-xl font-semibold break-words">{title || 'Your listing title'}</h3>
-            <Badge variant={type === 'item' ? 'default' : 'secondary'} className="w-fit">
-              {type === 'item' ? 'Item' : 'Service'}
-            </Badge>
+            <div className="flex gap-2">
+              <Badge variant={type === 'item' ? 'default' : 'secondary'} className="w-fit">
+                {type === 'item' ? 'Item' : 'Service'}
+              </Badge>
+              <Badge variant="outline" className="w-fit">
+                {CURRENCIES[currency].symbol}
+              </Badge>
+            </div>
           </div>
 
           <p className="text-muted-foreground text-sm md:text-base break-words">
@@ -752,7 +856,7 @@ const ListingPreview = ({ formData }: { formData: ListingFormValues }) => {
         </div>
 
         <div className="flex items-center gap-3 md:gap-4 p-3 md:p-4 bg-muted rounded-lg">
-          <DollarSign className="h-5 w-5 text-green-600 flex-shrink-0" />
+          <CurrencyIcon className="h-5 w-5 text-green-600 flex-shrink-0" />
           <div className="min-w-0">
             <span className="text-xl md:text-2xl font-bold break-words">{getPriceText()}</span>
             {price_type === 'negotiable' && (
@@ -824,6 +928,7 @@ const CreateListingWizard = () => {
     defaultValues: {
       type: 'item',
       price_type: 'fixed',
+      currency: detectUserCurrency(),
       delivery_options: ['pickup'],
       images: [],
     },
@@ -877,7 +982,7 @@ const CreateListingWizard = () => {
     const stepFields: Record<number, (keyof ListingFormValues)[]> = {
       0: ['title', 'description', 'type', 'category_id', 'condition'],
       1: ['images'],
-      2: ['price', 'price_type', 'delivery_options'],
+      2: ['price', 'price_type', 'currency', 'delivery_options'],
       3: ['address'],
       4: []
     };
@@ -906,12 +1011,12 @@ const CreateListingWizard = () => {
         condition: formData.condition,
         price: formData.price,
         price_type: formData.price_type,
+        currency: formData.currency,
         delivery_options: formData.delivery_options,
         seller_id: user.id,
         address: formData.address,
         images: formData.images,
         status: 'active',
-        currency: 'USD',
       };
 
       console.log('Submitting listing data:', listingData);
